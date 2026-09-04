@@ -32,3 +32,4 @@ __pycache__/
 
 # Demo database: rebuild with `php artisan migrate --seed`
 /database/database.sqlite
+/budong_budong_dt
