@@ -1,0 +1,172 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\Alert;
+use App\Models\MaintenanceTask;
+use App\Models\Report;
+use App\Models\SensorStation;
+use App\Models\Setting;
+use App\Services\MonitoringService;
+use Illuminate\Http\Request;
+use Illuminate\View\View;
+
+class PageController extends Controller
+{
+    public function __construct(
+        private readonly MonitoringService $monitoring,
+    ) {}
+
+    public function dashboard(): View
+    {
+        $damId = $this->monitoring->dam()->id;
+
+        return view('pages.dashboard', [
+            'boot' => $this->boot(),
+            'dashboard' => $this->monitoring->dashboard(),
+            // Chart defaults to the reservoir level series.
+            'stationsForChart' => SensorStation::query()
+                ->where('dam_id', $damId)
+                ->whereIn('code', ['awlr-hulu', 'awgc-01', 'awr-01'])
+                ->with('metrics')
+                ->get()
+                ->sortBy(fn (SensorStation $station) => $station->code === 'awlr-hulu' ? 0 : 1)
+                ->map(fn (SensorStation $station) => [
+                    'code' => $station->code,
+                    'name' => $station->name,
+                    'metrics' => $station->metrics->map->only(['key', 'label', 'unit', 'chart_type'])->values()->all(),
+                ])
+                ->values()
+                ->all(),
+            'upcoming' => MaintenanceTask::query()
+                ->where('dam_id', $damId)
+                ->where('status', '!=', 'selesai')
+                ->with('station:id,code,name,short_name')
+                ->orderBy('scheduled_for')
+                ->limit(4)
+                ->get(),
+        ]);
+    }
+
+    public function twin(?string $station = null): View
+    {
+        return view('pages.twin', [
+            'boot' => $this->boot(),
+            'dashboard' => $this->monitoring->dashboard(),
+            'openStation' => $station,
+        ]);
+    }
+
+    public function sensors(Request $request): View
+    {
+        $stations = $this->monitoring->markers();
+        $type = $request->string('tipe')->toString();
+
+        return view('pages.sensors', [
+            'boot' => $this->boot(),
+            'stations' => $type ? array_values(array_filter($stations, fn ($s) => $s['type'] === $type)) : $stations,
+            'types' => collect($stations)->pluck('type_label', 'type')->sort()->all(),
+            'activeType' => $type,
+        ]);
+    }
+
+    public function analytics(): View
+    {
+        $stations = SensorStation::query()
+            ->where('dam_id', $this->monitoring->dam()->id)
+            ->with('metrics')
+            ->orderBy('name')
+            ->get()
+            ->map(fn (SensorStation $station) => [
+                'code' => $station->code,
+                'name' => $station->name,
+                'metrics' => $station->metrics->map->only(['key', 'label', 'unit', 'chart_type'])->values()->all(),
+            ])
+            ->values()
+            ->all();
+
+        return view('pages.analytics', [
+            'boot' => $this->boot(),
+            'stations' => $stations,
+        ]);
+    }
+
+    public function maintenance(): View
+    {
+        $tasks = MaintenanceTask::query()
+            ->where('dam_id', $this->monitoring->dam()->id)
+            ->with('station:id,code,name')
+            ->orderBy('scheduled_for')
+            ->get();
+
+        return view('pages.maintenance', [
+            'boot' => $this->boot(),
+            'tasks' => $tasks,
+            'columns' => ['terjadwal' => 'Terjadwal', 'berjalan' => 'Berjalan', 'tertunda' => 'Tertunda', 'selesai' => 'Selesai'],
+        ]);
+    }
+
+    public function alerts(Request $request): View
+    {
+        $level = $request->string('level')->toString();
+
+        $alerts = Alert::query()
+            ->where('dam_id', $this->monitoring->dam()->id)
+            ->when($level, fn ($query) => $query->where('level', $level))
+            ->with('station:id,code,name')
+            ->orderByDesc('triggered_at')
+            ->paginate(20)
+            ->withQueryString();
+
+        return view('pages.alerts', [
+            'boot' => $this->boot(),
+            'alerts' => $alerts,
+            'level' => $level,
+        ]);
+    }
+
+    public function reports(): View
+    {
+        return view('pages.reports', [
+            'boot' => $this->boot(),
+            'reports' => Report::query()
+                ->where('dam_id', $this->monitoring->dam()->id)
+                ->orderByDesc('created_at')
+                ->limit(25)
+                ->get(),
+        ]);
+    }
+
+    public function settings(): View
+    {
+        $stations = SensorStation::query()
+            ->where('dam_id', $this->monitoring->dam()->id)
+            ->with('metrics')
+            ->orderBy('name')
+            ->get();
+
+        return view('pages.settings', [
+            'boot' => $this->boot(),
+            'dam' => $this->monitoring->dam(),
+            'stations' => $stations,
+            'preferences' => [
+                'map_skin' => Setting::get('map_skin', 'auto'),
+                'auto_rotate' => Setting::get('panorama_auto_rotate', true),
+                'refresh' => config('dam.refresh'),
+            ],
+        ]);
+    }
+
+    /** Shared bootstrap payload handed to Alpine on every page. */
+    private function boot(): array
+    {
+        return [
+            'environment' => $this->monitoring->environment(),
+            'markers' => $this->monitoring->markers(),
+            'map' => config('dam.map'),
+            'refresh' => config('dam.refresh'),
+            'statuses' => config('dam.statuses'),
+            'skin' => Setting::get('map_skin', 'auto'),
+        ];
+    }
+}

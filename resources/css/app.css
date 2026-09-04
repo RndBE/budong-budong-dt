@@ -1,0 +1,798 @@
+@import 'tailwindcss';
+@import '@fontsource-variable/plus-jakarta-sans';
+@import '@fontsource-variable/inter';
+@import '@photo-sphere-viewer/core/index.css';
+@import '@photo-sphere-viewer/markers-plugin/index.css';
+@import '@photo-sphere-viewer/compass-plugin/index.css';
+
+/* ------------------------------------------------------------------ *
+ |  Design tokens
+ * ------------------------------------------------------------------ */
+
+@theme {
+    --font-sans: 'Plus Jakarta Sans Variable', 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+    --font-mono: 'Inter Variable', ui-monospace, monospace;
+
+    --color-ink-950: #030b14;
+    --color-ink-900: #061420;
+    --color-ink-800: #0a1c2c;
+    --color-ink-700: #102a3f;
+    --color-ink-600: #1b3b53;
+
+    --color-mist-50: #f2f8ff;
+    --color-mist-100: #e4eefb;
+    --color-mist-200: #c5d8ec;
+    --color-mist-300: #9db4cc;
+    --color-mist-400: #7590ab;
+
+    --color-brand-300: #7cc4ff;
+    --color-brand-400: #47a6ff;
+    --color-brand-500: #1f8bf5;
+    --color-brand-600: #1268c9;
+
+    --color-state-normal: #34d399;
+    --color-state-waspada: #fbbf24;
+    --color-state-siaga: #fb923c;
+    --color-state-bahaya: #f87171;
+    --color-state-offline: #94a3b8;
+
+    --radius-glass: 20px;
+    --radius-chip: 14px;
+}
+
+/* ------------------------------------------------------------------ *
+ |  Base
+ * ------------------------------------------------------------------ */
+
+@layer base {
+    :root {
+        color-scheme: dark;
+    }
+
+    /*
+     * Chrome metrics. Every floating panel and every stage offset is derived
+     * from these, so the dashboard scales from a 1280 laptop to a 4K control
+     * room screen without a single hard-coded pixel offset in the views.
+     */
+    .app-frame {
+        --gap: clamp(12px, 0.9vw, 22px);
+        --rail-w: 64px;
+        --panel-w: clamp(316px, 24vw, 470px);
+        --monitor-w: clamp(184px, 14vw, 232px);
+        --header-h: clamp(88px, 4.6vw + 30px, 132px);
+
+        /* Clear area between the rail and the summary panel. */
+        --stage-left: calc(var(--rail-w) + var(--gap) * 2);
+        --stage-right: calc(var(--panel-w) + var(--gap) * 2);
+        --stage-top: var(--header-h);
+        --stage-bottom: calc(var(--gap) * 2 + 20px);
+
+        /* Everything in the chrome scales together on big monitors. */
+        --ui-zoom: 1;
+    }
+
+    /*
+     * On a large control-room screen the panels would otherwise keep their
+     * laptop size and look lost. Zooming the chrome (not the stage) grows text,
+     * chips and paddings uniformly; the stage keeps its own geometry and reads
+     * the resulting panel sizes back from the DOM.
+     */
+    @media (min-width: 1800px) {
+        .app-frame {
+            --ui-zoom: 1.1;
+        }
+    }
+
+    @media (min-width: 2200px) {
+        .app-frame {
+            --ui-zoom: 1.26;
+        }
+    }
+
+    @media (min-width: 3000px) {
+        .app-frame {
+            --ui-zoom: 1.5;
+        }
+    }
+
+    /*
+     * `zoom` is the only property that scales a whole subtree including its
+     * layout box; Firefox only learned it in 126, so it is feature-gated —
+     * older browsers simply get the unscaled (still usable) chrome.
+     */
+    @supports (zoom: 1.1) {
+        .chrome-scale {
+            zoom: var(--ui-zoom, 1);
+        }
+    }
+
+    /* Wide enough for the rail to carry labels. */
+    @media (min-width: 1440px) {
+        .app-frame {
+            --rail-w: clamp(188px, 12.5vw, 216px);
+        }
+    }
+
+    /* Below xl the summary panel slides over the stage instead of reserving a column. */
+    @media (max-width: 1279px) {
+        .app-frame {
+            --panel-w: min(400px, 86vw);
+            --stage-right: var(--gap);
+        }
+    }
+
+    /* Tablets: tighter chrome, narrower rail. */
+    @media (max-width: 1023px) {
+        .app-frame {
+            --gap: 10px;
+            --rail-w: 56px;
+            --panel-w: min(380px, 92vw);
+            --header-h: clamp(74px, 11vw, 96px);
+        }
+    }
+
+    /*
+     * Phones: the rail becomes a bottom bar, so the stage keeps the full width
+     * and gives up height instead.
+     */
+    @media (max-width: 639px) {
+        .app-frame {
+            --gap: 8px;
+            --rail-w: 0px;
+            --panel-w: 100vw;
+            --header-h: 64px;
+            --stage-left: var(--gap);
+            --stage-bottom: 84px;
+        }
+    }
+
+    html,
+    body {
+        height: 100%;
+    }
+
+    /*
+     * Mobile browsers shrink the visual viewport when their URL bar hides;
+     * dvh follows that, vh does not. The fallback keeps older engines working.
+     */
+    .app-frame {
+        height: 100vh;
+        height: 100dvh;
+    }
+
+    body {
+        margin: 0;
+        background: var(--color-ink-950);
+        color: var(--color-mist-100);
+        font-family: var(--font-sans);
+        font-feature-settings: 'cv11', 'ss01';
+        -webkit-font-smoothing: antialiased;
+        overflow: hidden;
+    }
+
+    /* Numeric readouts must not jitter while they tick. */
+    .tnum {
+        font-variant-numeric: tabular-nums;
+        font-feature-settings: 'tnum';
+    }
+
+    ::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+    }
+
+    ::-webkit-scrollbar-track {
+        background: transparent;
+    }
+
+    ::-webkit-scrollbar-thumb {
+        background: rgb(255 255 255 / 0.14);
+        border-radius: 999px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+        background: rgb(255 255 255 / 0.24);
+    }
+
+    [x-cloak] {
+        display: none !important;
+    }
+}
+
+/* ------------------------------------------------------------------ *
+ |  Liquid glass
+ |
+ |  Four stacked effects make the panels read as thick wet glass:
+ |    1. backdrop-filter    — real refraction of the map behind
+ |    2. ::before           — specular highlight that tracks the pointer
+ |    3. ::after            — turbulence-warped caustics (SVG filter)
+ |    4. inset ring shadows — chromatic edge dispersion
+ * ------------------------------------------------------------------ */
+
+@layer components {
+    .glass {
+        --glass-tint: 210 40% 12%;
+        --glass-alpha: 0.42;
+        --glass-blur: 26px;
+        --sheen-x: 50%;
+        --sheen-y: 0%;
+        --sheen-opacity: 0.55;
+
+        position: relative;
+        isolation: isolate;
+        border-radius: var(--radius-glass);
+        background:
+            linear-gradient(
+                160deg,
+                rgb(255 255 255 / 0.1) 0%,
+                rgb(255 255 255 / 0.02) 34%,
+                rgb(255 255 255 / 0) 62%
+            ),
+            hsl(var(--glass-tint) / var(--glass-alpha));
+        backdrop-filter: blur(var(--glass-blur)) saturate(165%) brightness(1.04);
+        -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(165%) brightness(1.04);
+        box-shadow:
+            inset 0 1px 0 rgb(255 255 255 / 0.22),
+            inset 0 0 0 1px rgb(255 255 255 / 0.08),
+            inset 1px 0 0 rgb(124 196 255 / 0.1),
+            inset -1px 0 0 rgb(255 173 214 / 0.07),
+            inset 0 -18px 32px -24px rgb(255 255 255 / 0.35),
+            0 24px 60px -22px rgb(2 8 20 / 0.72),
+            0 2px 10px rgb(2 8 20 / 0.4);
+    }
+
+    .glass::before {
+        content: '';
+        position: absolute;
+        inset: 0;
+        z-index: -1;
+        border-radius: inherit;
+        pointer-events: none;
+        background: radial-gradient(
+            260px circle at var(--sheen-x) var(--sheen-y),
+            rgb(255 255 255 / 0.18),
+            rgb(255 255 255 / 0.04) 42%,
+            transparent 68%
+        );
+        opacity: var(--sheen-opacity);
+        transition: opacity 240ms ease;
+    }
+
+    /* Caustics: a noise texture pushed around by feTurbulence. */
+    .glass::after {
+        content: '';
+        position: absolute;
+        inset: -1px;
+        z-index: -1;
+        border-radius: inherit;
+        pointer-events: none;
+        opacity: 0.4;
+        mix-blend-mode: soft-light;
+        background:
+            repeating-linear-gradient(
+                115deg,
+                rgb(255 255 255 / 0.07) 0 2px,
+                transparent 2px 7px
+            ),
+            radial-gradient(120% 90% at 12% -10%, rgb(124 196 255 / 0.18), transparent 55%);
+        filter: url(#lg-warp);
+    }
+
+    .glass:hover {
+        --sheen-opacity: 0.85;
+    }
+
+    /*
+     * Without backdrop-filter the panels would be a thin wash over the photo
+     * and the text would stop being readable, so they fall back to a solid
+     * tint. (Old Firefox builds, and anyone who disabled the feature.)
+     */
+    @supports not ((backdrop-filter: blur(2px)) or (-webkit-backdrop-filter: blur(2px))) {
+        .glass {
+            background: hsl(var(--glass-tint) / 0.9);
+        }
+
+        .glass::after {
+            display: none;
+        }
+    }
+
+    /*
+     * Safari renders SVG filter references on a blended pseudo-element
+     * unpredictably; it keeps the glass, just without the caustics.
+     */
+    @supports (-webkit-hyphens: none) {
+        .glass::after {
+            filter: none;
+            opacity: 0.28;
+        }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        .glass::after,
+        .pulse-ring::after,
+        .shimmer {
+            animation: none;
+        }
+
+        .marker-enter,
+        .panel-enter,
+        .viewer-enter {
+            animation-duration: 1ms;
+        }
+    }
+
+    /* Variants ---------------------------------------------------- */
+
+    .glass--panel {
+        --glass-alpha: 0.5;
+        --glass-blur: 30px;
+    }
+
+    .glass--rail {
+        --glass-alpha: 0.34;
+        --glass-blur: 34px;
+    }
+
+    .glass--chip {
+        --glass-alpha: 0.4;
+        --glass-blur: 18px;
+        border-radius: var(--radius-chip);
+        box-shadow:
+            inset 0 1px 0 rgb(255 255 255 / 0.26),
+            inset 0 0 0 1px rgb(255 255 255 / 0.1),
+            0 12px 28px -14px rgb(2 8 20 / 0.8);
+    }
+
+    .glass--inset {
+        --glass-alpha: 0.28;
+        --glass-blur: 12px;
+        border-radius: 16px;
+        box-shadow:
+            inset 0 1px 0 rgb(255 255 255 / 0.14),
+            inset 0 0 0 1px rgb(255 255 255 / 0.06);
+    }
+
+    .glass--flat::after {
+        display: none;
+    }
+
+    /* Interactive elements --------------------------------------- */
+
+    .glass-button {
+        @apply relative inline-flex items-center justify-center gap-2 text-mist-100 transition;
+        --glass-alpha: 0.36;
+        --glass-blur: 16px;
+    }
+
+    .glass-button:hover {
+        --glass-alpha: 0.5;
+        color: #fff;
+    }
+
+    .glass-button:active {
+        transform: translateY(1px);
+    }
+
+    .nav-item {
+        @apply relative flex items-center gap-3 rounded-2xl px-3.5 py-2.5 text-sm font-medium text-mist-300 transition;
+    }
+
+    .nav-item:hover {
+        @apply text-mist-50;
+        background: rgb(255 255 255 / 0.06);
+    }
+
+    .nav-item--active {
+        @apply text-white;
+        background: linear-gradient(120deg, rgb(31 139 245 / 0.9), rgb(18 104 201 / 0.72));
+        box-shadow:
+            inset 0 1px 0 rgb(255 255 255 / 0.32),
+            0 12px 26px -14px rgb(31 139 245 / 0.9);
+    }
+
+    .status-dot {
+        @apply inline-block size-2 rounded-full;
+        box-shadow: 0 0 0 3px rgb(255 255 255 / 0.06);
+    }
+
+    /* Station markers grow with the rest of the chrome on large screens. */
+    @supports (zoom: 1.1) {
+        .marker-node {
+            zoom: var(--ui-zoom, 1);
+        }
+    }
+
+    /* Phones only get the pin: the caption would cover the dam. */
+    @media (max-width: 639px) {
+        .marker-node .marker-caption {
+            display: none !important;
+        }
+    }
+
+    .marker-pin {
+        @apply grid place-items-center rounded-full;
+        width: 30px;
+        height: 30px;
+        background: linear-gradient(150deg, rgb(255 255 255 / 0.28), rgb(255 255 255 / 0.06));
+        box-shadow:
+            inset 0 1px 0 rgb(255 255 255 / 0.5),
+            0 8px 18px -6px rgb(2 8 20 / 0.9);
+    }
+
+    .scroll-y {
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        scrollbar-gutter: stable;
+    }
+
+    /*
+     * The headline tiles drop to two columns when the panel is narrow —
+     * driven by the panel's own width, not the viewport, so the slide-over on
+     * small screens reflows the same way.
+     */
+    .kpi-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    @container panel (min-width: 368px) {
+        .kpi-grid {
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+        }
+    }
+
+    /* Container queries landed in Safari 16 / Firefox 110; without them the
+       panel simply keeps the two-column layout, which fits every width. */
+    @supports not (container-type: inline-size) {
+        @media (min-width: 1536px) {
+            .kpi-grid {
+                grid-template-columns: repeat(4, minmax(0, 1fr));
+            }
+        }
+    }
+
+    /* Tables on small screens scroll sideways instead of squashing. */
+    .table-scroll {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .table-scroll > table {
+        min-width: 720px;
+    }
+}
+
+/* ------------------------------------------------------------------ *
+ |  Map stage + panorama transitions
+ * ------------------------------------------------------------------ */
+
+@layer utilities {
+    .stage-layer {
+        position: absolute;
+        inset: 0;
+        background-position: center;
+        background-size: cover;
+        background-repeat: no-repeat;
+        transform-origin: center;
+        will-change: opacity, transform, filter;
+    }
+
+    .marker-enter {
+        animation: marker-in 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+    }
+
+    .panel-enter {
+        animation: panel-in 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
+    }
+
+    .viewer-enter {
+        animation: viewer-in 520ms cubic-bezier(0.22, 1, 0.36, 1) both;
+    }
+
+    .pulse-ring::after {
+        content: '';
+        position: absolute;
+        inset: -6px;
+        border-radius: 999px;
+        border: 1px solid currentColor;
+        opacity: 0.55;
+        animation: pulse-ring 2.4s ease-out infinite;
+    }
+
+    .shimmer {
+        background: linear-gradient(
+            100deg,
+            rgb(255 255 255 / 0) 20%,
+            rgb(255 255 255 / 0.12) 45%,
+            rgb(255 255 255 / 0) 70%
+        );
+        background-size: 220% 100%;
+        animation: shimmer 2.6s linear infinite;
+    }
+}
+
+@keyframes marker-in {
+    from {
+        opacity: 0;
+        transform: translate(-50%, -40%) scale(0.86);
+    }
+    to {
+        opacity: 1;
+        transform: translate(-50%, -50%) scale(1);
+    }
+}
+
+@keyframes panel-in {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: none;
+    }
+}
+
+@keyframes viewer-in {
+    from {
+        opacity: 0;
+        transform: scale(1.06);
+        filter: blur(14px);
+    }
+    to {
+        opacity: 1;
+        transform: none;
+        filter: none;
+    }
+}
+
+@keyframes pulse-ring {
+    0% {
+        transform: scale(0.85);
+        opacity: 0.6;
+    }
+    70% {
+        transform: scale(1.6);
+        opacity: 0;
+    }
+    100% {
+        opacity: 0;
+    }
+}
+
+@keyframes shimmer {
+    from {
+        background-position: 180% 0;
+    }
+    to {
+        background-position: -80% 0;
+    }
+}
+
+/* ------------------------------------------------------------------ *
+ |  Panorama hotspots (markup lives in resources/js/components/panorama.js)
+ * ------------------------------------------------------------------ */
+
+.psv-hotspot {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+}
+
+.psv-hotspot__ring {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 34px;
+    height: 34px;
+    translate: -50% -50%;
+    border: 1px solid currentColor;
+    border-radius: 999px;
+    opacity: 0.5;
+    animation: pulse-ring 2.6s ease-out infinite;
+}
+
+/* Station pins inside the stage sphere ---------------------------------- */
+
+.sphere-stage {
+    will-change: filter;
+    transform: translateZ(0);
+}
+
+.sphere-pin {
+    position: relative;
+    display: block;
+    width: 30px;
+    height: 30px;
+}
+
+.sphere-pin__dot {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    border-radius: 999px;
+    color: #04101c;
+    background: var(--pin, #47a6ff);
+    box-shadow:
+        0 0 0 3px rgb(255 255 255 / 0.22),
+        0 0 0 9px color-mix(in srgb, var(--pin, #47a6ff) 26%, transparent),
+        0 14px 26px -12px rgb(2 8 20 / 0.9);
+    transition: transform 200ms ease;
+}
+
+.sphere-pin:hover .sphere-pin__dot {
+    transform: scale(1.12);
+}
+
+/*
+ * Deliberately not `.glass`: every pin moves on every frame while the stage
+ * drifts, and fifteen backdrop-filter chips is the one thing that makes that
+ * movement stutter on a large screen. A flat translucent plate over a photo
+ * reads the same.
+ */
+.sphere-pin__label {
+    position: absolute;
+    top: 50%;
+    left: 40px;
+    display: flex;
+    flex-direction: column;
+    padding: 6px 10px;
+    white-space: nowrap;
+    translate: 0 -50%;
+    border-radius: var(--radius-chip, 14px);
+    background: hsl(210 40% 10% / 0.62);
+    box-shadow:
+        inset 0 1px 0 rgb(255 255 255 / 0.16),
+        inset 0 0 0 1px rgb(255 255 255 / 0.08);
+    transition: opacity 220ms ease;
+}
+
+.sphere-pin__name {
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.15;
+    color: #fff;
+}
+
+.sphere-pin__value {
+    font-size: 10.5px;
+    line-height: 1.15;
+}
+
+/* A slow breath so the stage never looks frozen. */
+.sphere-pin__dot::after {
+    content: '';
+    position: absolute;
+    inset: -6px;
+    border-radius: 999px;
+    border: 1px solid var(--pin, #47a6ff);
+    opacity: 0.55;
+    animation: sphere-breath 3.4s ease-out infinite;
+}
+
+@keyframes sphere-breath {
+    0% { transform: scale(0.85); opacity: 0.5; }
+    70% { transform: scale(1.5); opacity: 0; }
+    100% { transform: scale(1.5); opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .sphere-pin__dot::after {
+        animation: none;
+    }
+}
+
+/* The pin the camera is turning towards. */
+.sphere-pin.is-target .sphere-pin__dot {
+    transform: scale(1.3);
+    box-shadow:
+        0 0 0 4px rgb(255 255 255 / 0.5),
+        0 0 0 14px color-mix(in srgb, var(--pin, #47a6ff) 30%, transparent),
+        0 14px 26px -12px rgb(2 8 20 / 0.9);
+}
+
+.sphere-pin.is-target .sphere-pin__label {
+    opacity: 1;
+    filter: brightness(1.2);
+}
+
+/* Label pill off: the caption only appears under the pointer. */
+.sphere--quiet .sphere-pin__label {
+    opacity: 0;
+}
+
+.sphere--quiet .sphere-pin:hover .sphere-pin__label {
+    opacity: 1;
+}
+
+/* Placement mode: pins are dragged, not opened. */
+.sphere--placing .sphere-pin {
+    cursor: grab;
+}
+
+.sphere--placing .sphere-pin__dot {
+    box-shadow:
+        0 0 0 3px rgb(255 255 255 / 0.5),
+        0 0 0 10px color-mix(in srgb, var(--pin, #47a6ff) 34%, transparent),
+        0 14px 26px -12px rgb(2 8 20 / 0.9);
+}
+
+.psv-hotspot__chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 12px;
+    border-radius: 14px;
+    color: #e4eefb;
+    background: hsl(210 40% 12% / 0.52);
+    backdrop-filter: blur(16px) saturate(160%);
+    -webkit-backdrop-filter: blur(16px) saturate(160%);
+    box-shadow:
+        inset 0 1px 0 rgb(255 255 255 / 0.24),
+        inset 0 0 0 1px rgb(255 255 255 / 0.1),
+        0 14px 30px -16px rgb(2 8 20 / 0.9);
+    transition: transform 200ms ease, filter 200ms ease;
+}
+
+.psv-hotspot:hover .psv-hotspot__chip {
+    transform: translateY(-2px);
+    filter: brightness(1.18);
+}
+
+.psv-hotspot__text {
+    display: flex;
+    flex-direction: column;
+    line-height: 1.15;
+}
+
+.psv-hotspot__label {
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.psv-hotspot__value {
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    color: #9db4cc;
+}
+
+.psv-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 999px;
+    box-shadow: 0 0 0 3px rgb(255 255 255 / 0.12);
+}
+
+/* Photo Sphere Viewer sits on a dark stage; drop its default chrome. */
+.psv-container {
+    background: transparent !important;
+}
+
+.psv-navbar {
+    display: none !important;
+}
+
+.psv-loader-container {
+    background: transparent !important;
+}
+
+/* Keep the compass out from under the floating summary panel. */
+.psv-compass {
+    top: auto !important;
+    right: auto !important;
+    bottom: 26px !important;
+    left: 236px !important;
+}
+
+@media (max-width: 1279px) {
+    .psv-compass {
+        left: 92px !important;
+    }
+}

@@ -1,0 +1,110 @@
+<?php
+
+namespace Database\Seeders;
+
+use App\Models\Alert;
+use App\Models\Dam;
+use App\Models\MaintenanceTask;
+use App\Models\SensorStation;
+use App\Models\Setting;
+use App\Services\AlertEvaluator;
+use Carbon\CarbonImmutable;
+use Illuminate\Database\Seeder;
+
+/**
+ * Operational context around the readings: the two standing warnings shown in
+ * the reference dashboard, a maintenance backlog, and display preferences.
+ */
+class OperationSeeder extends Seeder
+{
+    public function __construct(
+        private readonly AlertEvaluator $evaluator,
+    ) {}
+
+    public function run(): void
+    {
+        $dam = Dam::query()->where('code', 'budong-budong')->firstOrFail();
+        $stations = SensorStation::query()->where('dam_id', $dam->id)->get()->keyBy('code');
+        $now = CarbonImmutable::now($dam->timezone);
+
+        Alert::query()->where('dam_id', $dam->id)->delete();
+
+        Alert::query()->create([
+            'dam_id' => $dam->id,
+            'sensor_station_id' => $stations['awr-01']->id,
+            'level' => 'waspada',
+            'category' => 'hidrologi',
+            'title' => 'Waspada Curah Hujan',
+            'message' => 'Curah hujan > 50 mm dalam 24 jam pada pos AWR-01. Tingkatkan pemantauan inflow dan siapkan operasi pintu.',
+            'metric_key' => 'rainfall_24h',
+            'value' => 56.4,
+            'threshold' => 50,
+            'triggered_at' => $now->subHours(2)->setTime(8, 45),
+        ]);
+
+        Alert::query()->create([
+            'dam_id' => $dam->id,
+            'sensor_station_id' => $stations['awlr-hulu']->id,
+            'level' => 'waspada',
+            'category' => 'hidrologi',
+            'title' => 'Perubahan Muka Air Cepat',
+            'message' => 'Perubahan muka air > 0,5 m dalam 1 jam. Verifikasi bacaan radar dengan papan duga manual.',
+            'metric_key' => 'water_level',
+            'value' => 0.54,
+            'threshold' => 0.5,
+            'triggered_at' => $now->subHours(3)->setTime(7, 30),
+        ]);
+
+        Alert::query()->create([
+            'dam_id' => $dam->id,
+            'sensor_station_id' => $stations['v-notch']->id,
+            'level' => 'waspada',
+            'category' => 'geoteknik',
+            'title' => 'Debit Rembesan Naik',
+            'message' => 'Debit rembesan V-notch naik 18% dibanding rata-rata 7 hari, kekeruhan masih normal.',
+            'metric_key' => 'seepage_flow',
+            'value' => 15.2,
+            'threshold' => 14.5,
+            'triggered_at' => $now->subDay()->setTime(21, 10),
+            'resolved_at' => $now->subHours(9),
+        ]);
+
+        MaintenanceTask::query()->where('dam_id', $dam->id)->delete();
+
+        $tasks = [
+            ['station' => 'avwr-01', 'title' => 'Kalibrasi ulang piezometer VW zona inti', 'type' => 'kalibrasi', 'status' => 'terjadwal', 'priority' => 'tinggi', 'assignee' => 'Tim Instrumentasi', 'days' => 4],
+            ['station' => 'awr-01', 'title' => 'Bersihkan penakar hujan dan panel surya', 'type' => 'preventif', 'status' => 'terjadwal', 'priority' => 'normal', 'assignee' => 'Petugas OP Pagi', 'days' => 2],
+            ['station' => 'adr-01', 'title' => 'Verifikasi prisma hilang pada blok tengah', 'type' => 'korektif', 'status' => 'berjalan', 'priority' => 'tinggi', 'assignee' => 'Surveyor Geodesi', 'days' => 0],
+            ['station' => 'cctv-02', 'title' => 'Ganti housing kamera spillway yang berkabut', 'type' => 'korektif', 'status' => 'tertunda', 'priority' => 'normal', 'assignee' => 'Teknisi Elektronik', 'days' => -3],
+            ['station' => 'v-notch', 'title' => 'Pengukuran manual debit rembesan pembanding', 'type' => 'inspeksi', 'status' => 'selesai', 'priority' => 'normal', 'assignee' => 'Tim Geoteknik', 'days' => -1],
+            ['station' => 'radio-ap', 'title' => 'Audit link budget backhaul 5 GHz', 'type' => 'preventif', 'status' => 'terjadwal', 'priority' => 'rendah', 'assignee' => 'Tim Jaringan', 'days' => 9],
+            ['station' => 'ews-01', 'title' => 'Uji fungsi sirene mingguan', 'type' => 'preventif', 'status' => 'selesai', 'priority' => 'normal', 'assignee' => 'Petugas OP Siang', 'days' => -2],
+            ['station' => 'gnss-tilt', 'title' => 'Perbaikan grounding pilar GNSS', 'type' => 'korektif', 'status' => 'terjadwal', 'priority' => 'tinggi', 'assignee' => 'Tim Instrumentasi', 'days' => 6],
+        ];
+
+        foreach ($tasks as $task) {
+            $scheduled = $now->addDays($task['days']);
+
+            MaintenanceTask::query()->create([
+                'dam_id' => $dam->id,
+                'sensor_station_id' => $stations[$task['station']]->id,
+                'title' => $task['title'],
+                'type' => $task['type'],
+                'status' => $task['status'],
+                'priority' => $task['priority'],
+                'assignee' => $task['assignee'],
+                'scheduled_for' => $scheduled->toDateString(),
+                'started_at' => in_array($task['status'], ['berjalan', 'selesai'], true) ? $scheduled->setTime(8, 0) : null,
+                'completed_at' => $task['status'] === 'selesai' ? $scheduled->setTime(11, 30) : null,
+                'notes' => $task['status'] === 'tertunda' ? 'Menunggu suku cadang housing dari gudang pusat.' : null,
+            ]);
+        }
+
+        Setting::put('map_skin', 'auto', 'tampilan');
+        Setting::put('panorama_auto_rotate', true, 'tampilan');
+        Setting::put('marker_labels', true, 'tampilan');
+
+        // Raise any alert the seeded readings actually justify.
+        $this->evaluator->evaluateAll($dam->id);
+    }
+}
