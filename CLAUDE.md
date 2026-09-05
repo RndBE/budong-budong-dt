@@ -41,6 +41,9 @@ records conventions that are easy to break.
   (hotspots). `panorama.js` is only the PSV loader plus markup helpers. Never
   mount a second viewer for the station view — that is a second WebGL context
   for the same picture.
+- The compass keeps the stage's top-left corner in both views, so the station
+  banner starts at `calc(var(--stage-left) + var(--compass-w))`. `--compass-w`
+  is 0 below `sm`, where the compass is hidden.
 - Chrome that covers the stage must be `pointer-events-none` on its root with
   `pointer-events-auto` on the controls themselves (`station-overlay`), or it
   eats every drag meant for the sphere. Drag speed is tuned per viewport in
@@ -76,6 +79,54 @@ records conventions that are easy to break.
   stage: the dam's own 360 panorama with a pin per station, swapped for that
   station's panorama when a pin is picked. There is no separate map page;
   `/peta` only redirects.
+- The compass reads `bearing = heading + northOffset`, but the dial rotates by
+  `-dialAngle` — an unwrapped running total. Feeding it the 0-360 bearing makes
+  a CSS transition unwind 359 degrees backwards every time the camera passes
+  north. The case and its top marker stay fixed. `north_offset` comes
+  from the panorama payload (`panorama_north_offset`, falling back to
+  `dam.stage.north_offset`) — the renders are not oriented, so it is data, not
+  something to derive.
+- Every `viewer.animate()` call must be wrapped in `settle()`: a camera move
+  that another move cancels rejects with `isFromCancelledTransition`, which
+  otherwise lands in the console as an unhandled rejection.
+- Focus is visible app-wide through one `:focus-visible` rule in `app.css`
+  (bright ring plus a dark halo, because the chrome floats over a photograph).
+  Never add `focus:outline-none` — that is what made the keyboard invisible in
+  the first place.
+- Icon-only controls carry `aria-label` as well as `title`; a tooltip is not a
+  name for touch or a screen reader. Toggles also carry `aria-pressed`.
+- The bottom bar pills filter the pins (`pinFilter` in `twin-sphere.js`, water
+  types listed in `waterTypes`). They used to dispatch an event nobody listened
+  to — controls that look live must do something.
+- Tables are for pointers: below `sm` the sensor list renders the same rows as
+  cards (`sm:hidden` list next to a `max-sm:hidden` table). Touch targets stay
+  at 40px or more.
+- Blade elements take exactly one `style` attribute — a second one is silently
+  dropped by the parser, which is how the panel once lost its positioning and
+  landed on the left of the screen. Merge declarations into the existing one.
+- Anything positioned from `--stage-*` or `--panel-w` carries `chrome-slide`, so
+  folding a panel moves the layout on the same curve as the panel itself
+  (disabled under `prefers-reduced-motion`).
+- The summary panel folds away on desktop through `panelCollapsed` (persisted in
+  `localStorage`, class `app-frame--panel-collapsed`). The panel keeps its own
+  `--panel-w-open`; only `--panel-w` — what the stage reserves — goes to zero, so
+  the stage widens without squashing the panel mid-animation. Collapsed also
+  means `inert`, so focus cannot land in it.
+- The summary panel takes a `skipPrimary` flag; the dashboard sets it because
+  the page already prints those four tiles across the top.
+- The left column is one element: `partials/sidebar` on top, `system-monitor`
+  pinned to its bottom, both the width of `--rail-w`. `compact` lives on the
+  `.app-frame` x-data and toggles `.app-frame--rail-compact`, which rewrites
+  `--rail-w` — that is what keeps the rail, the stage inset and the monitor in
+  agreement. Below 1440 the monitor renders as a strip of status dots instead of
+  clipped rows.
+- The frame is `w-full`, never `w-screen`: `100vw` includes the scrollbar, which
+  used to push the summary panel ~15px off the right edge on any page tall
+  enough to scroll.
+- A menu opening over another glass panel needs `.glass--menu` (near-opaque);
+  plain `.glass--panel` lets the numbers underneath read straight through it,
+  and Chromium drops the backdrop blur inside the zoomed chrome. The header sits
+  at `z-50` so the user menu is not painted under the summary panel.
 - Never hard-code layout offsets in a view. The chrome metrics live as CSS
   variables on `.app-frame` (`--gap`, `--rail-w`, `--panel-w`, `--header-h`,
   `--stage-*`, `--ui-zoom`); `map-stage.js` measures the real rail/header/panel
@@ -90,6 +141,10 @@ records conventions that are easy to break.
   server clock, `custom` drives lighting from `/api/environment/curve` (a day of
   samples) so it can be scrubbed or played back faster. Never re-implement the
   solar maths in JS — extend `SolarClock` and the curve instead.
+- A pin picked from search is `highlighted`: it wears its caption even with the
+  `Label` pill off, and keeps it until the reader touches the sphere or opens a
+  station. Turning the camera to a dot without naming it leaves the reader to
+  guess which one was meant.
 - Marker captions are behind the `Label` pill on the bottom bar (`showLabels` in
   `twin-sphere.js`, remembered in `localStorage` under `twin.labels`); the CSS
   class `sphere--quiet` hides them, hover still reveals one.

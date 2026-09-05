@@ -1,8 +1,10 @@
 {{-- Right panel: site-wide summary. Data comes from the polled `site` store. --}}
 <div class="scroll-y flex h-full flex-col gap-3.5 pr-0.5">
 
-    {{-- Parameter Utama ------------------------------------------------ --}}
-    <div class="glass glass--panel panel-enter shrink-0 p-4" x-sheen>
+    {{-- Parameter Utama. The dashboard prints the same four tiles across the
+         top of the page, so it asks for them to be left out here. --}}
+    <div class="glass glass--panel panel-enter shrink-0 p-4" x-sheen
+         @if ($skipPrimary ?? false) hidden @endif>
         <div class="mb-3 flex items-center justify-between">
             <h2 class="text-[14px] font-semibold text-white">Parameter Utama</h2>
             <a href="{{ route('sensors') }}" class="text-[11px] font-medium text-brand-300 hover:text-brand-200">Lihat Semua</a>

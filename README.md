@@ -65,6 +65,11 @@ kecepatan. Jam pada header ikut menampilkan waktu simulasi dengan penanda
 
 ### Label penanda
 
+Memilih hasil **Cari Lokasi** memutar kamera ke penanda itu **dan menampilkan
+namanya** — sekalipun label sedang dimatikan — plus denyut singkat supaya jelas
+yang mana. Namanya bertahan sampai panggung disentuh lagi atau stasiun lain
+dibuka.
+
 Pil **Label** pada bar bawah panggung menyalakan atau mematikan keterangan di
 samping tiap penanda. Saat mati hanya pin berwarna yang tampil; menyorot sebuah
 penanda atau membuka panoramanya tetap memunculkan labelnya. Pilihannya
@@ -100,6 +105,51 @@ panggung bisa berpadu-silang di antaranya tanpa gambar melompat:
 - gradasi matahari tetap jalan di atasnya tapi hanya **setengah kekuatan** —
   tiap tekstur sudah punya cahayanya sendiri, dan menit-menit di antara dua
   tekstur diisi oleh gradasi itu.
+
+### Kompas panggung
+
+Kompas di kiri atas panggung kini berupa alat, bukan lambang yang ikut berputar:
+rangkanya diam beserta penanda biru di puncaknya — itulah arah pandang kamera —
+sementara piringan berisi jarum utara (merah), huruf **U**, dan tiga garis
+penunjuk berputar di bawahnya. Angkanya dibaca di bawah rangka, lengkap dengan
+mata angin Indonesia (`142° TG`). Mengklik kompas memutar kamera menghadap
+utara. Piringannya memakai sudut berjalan, bukan 0–360, supaya saat melewati
+utara ia meneruskan putaran alih-alih berbalik satu lingkaran penuh.
+
+Arah utara di dalam panorama diatur lewat `dam.stage.north_offset` (derajat),
+dan tiap stasiun bisa menimpanya dengan kolom `panorama_north_offset`. Render
+panorama tidak membawa informasi orientasi — matahari di render fajar dan senja
+hanya berselisih 18°, jadi tidak bisa dipakai menghitung utara — sehingga nilai
+ini harus diisi dari data lapangan sekali saja.
+
+### Aksesibilitas & sentuh
+
+- Cincin fokus keyboard berlaku di seluruh aplikasi (`:focus-visible`), jadi
+  operator yang bekerja tanpa tetikus selalu tahu posisinya. Tombol ikon punya
+  `aria-label`, dan tombol dua-keadaan punya `aria-pressed`.
+- **Esc** menutup panorama stasiun maupun panel geser.
+- Di ponsel, daftar stasiun tampil sebagai kartu (bukan tabel yang harus digeser
+  mendatar) dan seluruh sasaran sentuh minimal 40 px.
+- 156 kolom isian ambang batas di Pengaturan punya nama yang terbaca pembaca
+  layar, penanda "belum disimpan", serta pesan gagal bila penyimpanan tertolak.
+
+### Melipat panel
+
+Kolom kiri diringkas jadi deretan ikon lewat tombol chevron di bawah menu.
+Panel kanan punya pegangan sendiri di tepi kirinya (layar ≥ 1280 px): sekali
+klik panelnya terlipat ke kanan dan panggung/isi halaman melebar memakai
+ruangnya; pegangannya ikut pindah ke tepi layar untuk membukanya lagi. Di bawah
+1280 px panel itu memang sudah berupa lapisan geser dengan tombolnya sendiri.
+Kedua pilihan tersimpan per browser.
+
+### Kolom kiri
+
+Menu dan kartu **Sistem Monitor** menempati satu kolom: menu di atas, monitor
+menempel di dasar kolom, keduanya selebar `--rail-w`. Tombol chevron di bawah
+menu meringkasnya jadi deretan ikon 64 px — panggung ikut melebar karena
+`--rail-w` yang sama dipakai untuk menghitung `--stage-left`. Di layar < 1440 px
+menu memang hanya ikon, jadi Sistem Monitor tampil sebagai deretan titik status
+(disorot untuk melihat namanya) alih-alih baris teks yang terpotong.
 
 ### Panggung 360°
 

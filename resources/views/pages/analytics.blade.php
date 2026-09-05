@@ -10,7 +10,7 @@
             <div class="mb-4 flex flex-wrap items-end gap-3">
                 <label class="min-w-[240px] flex-1">
                     <span class="mb-1.5 block text-[11px] font-medium text-mist-300">Stasiun</span>
-                    <select class="glass glass--inset w-full appearance-none px-3.5 py-2.5 text-[12.5px] text-white focus:outline-none"
+                    <select class="glass glass--inset w-full appearance-none px-3.5 py-2.5 text-[12.5px] text-white"
                             x-model="stationCode" @change="onStationChange()">
                         <template x-for="station in stations" :key="station.code">
                             <option class="bg-ink-800" :value="station.code" x-text="station.name"></option>
@@ -20,7 +20,7 @@
 
                 <label class="min-w-[220px] flex-1">
                     <span class="mb-1.5 block text-[11px] font-medium text-mist-300">Parameter</span>
-                    <select class="glass glass--inset w-full appearance-none px-3.5 py-2.5 text-[12.5px] text-white focus:outline-none"
+                    <select class="glass glass--inset w-full appearance-none px-3.5 py-2.5 text-[12.5px] text-white"
                             x-model="metricKey" @change="load()">
                         <template x-for="metric in metrics" :key="metric.key">
                             <option class="bg-ink-800" :value="metric.key"

@@ -33,6 +33,14 @@ export default function twinSphere() {
         flying: false,
         flyingTo: null,
 
+        /**
+         * A pin the stage is pointing out — from a search hit, say. It wears
+         * its caption even when labels are switched off, because otherwise the
+         * camera turns to a place and leaves the reader to guess which dot it
+         * meant.
+         */
+        highlighted: null,
+
         /** True only while the camera turns; the pins stay up that long. */
         pointing: false,
 
@@ -43,10 +51,29 @@ export default function twinSphere() {
 
         /** Where the camera looks, in degrees — drives the glass compass. */
         heading: 0,
+
+        /** Where north sits in the panorama on screen, in degrees. */
+        northOffset: 0,
+
+        /**
+         * The compass dial's angle, unwrapped.
+         *
+         * `bearing` is 0-360, so it steps from 359 to 0 — and a CSS transition
+         * reads that as turning 359 degrees backwards. This one keeps counting
+         * (…358, 359, 360, 361…), so the dial always takes the short way.
+         */
+        dialAngle: 0,
         activeHotspot: null,
 
         /** Marker captions; off leaves just the pins. */
         showLabels: true,
+
+        /**
+         * Which pins the stage carries: every station, or only the ones that
+         * measure water (level, quality, seepage, gate). The bottom bar used to
+         * dispatch this as an event nobody listened to.
+         */
+        pinFilter: 'sensor',
 
         /** Pin placement: drag a station to where it really stands. */
         editMarkers: false,
@@ -105,6 +132,14 @@ export default function twinSphere() {
                 }
             });
 
+            // The viewer rejects its own transition promise when a swap is
+            // interrupted; that one is expected, everything else still reports.
+            window.addEventListener('unhandledrejection', (event) => {
+                if (event.reason?.isFromCancelledTransition) {
+                    event.preventDefault();
+                }
+            });
+
             this.bindDragging();
             this.mount();
         },
@@ -112,6 +147,24 @@ export default function twinSphere() {
         /** Base panorama descriptor from `/api/environment`. */
         get base() {
             return this.$store.site.environment?.stage?.base ?? null;
+        },
+
+        /** A new panorama can put north somewhere else; the dial follows. */
+        setNorthOffset(offset) {
+            this.dialAngle += (offset ?? 0) - this.northOffset;
+            this.northOffset = offset ?? 0;
+        },
+
+        /** Compass bearing the camera is pointing at, 0-360 from north. */
+        get bearing() {
+            return (((this.heading + this.northOffset) % 360) + 360) % 360;
+        },
+
+        /** Bearing as degrees plus the Indonesian point of the compass. */
+        get compassLabel() {
+            const points = ['U', 'TL', 'T', 'TG', 'S', 'BD', 'B', 'BL'];
+
+            return `${Math.round(this.bearing)}° ${points[Math.round(this.bearing / 45) % 8]}`;
         },
 
         /** Which texture the sphere is actually wearing (handy when debugging). */
@@ -195,6 +248,7 @@ export default function twinSphere() {
             const base = this.base;
             psv.showing = base;
             this.phase = this.sunPhase;
+            this.setNorthOffset(base.panorama.north_offset ?? 0);
 
             const opening = this.phaseAsset(this.phase);
 
@@ -249,7 +303,11 @@ export default function twinSphere() {
             });
 
             psv.viewer.addEventListener('position-updated', ({ position }) => {
-                this.heading = position.yaw / DEG;
+                const heading = position.yaw / DEG;
+
+                // Shortest way round, then add it to the running total.
+                this.dialAngle += (((heading - this.heading) % 360) + 540) % 360 - 180;
+                this.heading = heading;
             });
 
             psv.viewer.addEventListener('size-updated', () => this.tuneMoveSpeed());
@@ -278,6 +336,7 @@ export default function twinSphere() {
             const same = psv.showing?.code === target.code;
             psv.showing = target;
             this.activeHotspot = null;
+            this.setNorthOffset(target.panorama?.north_offset ?? 0);
 
             if (same) {
                 this.syncPins();
@@ -423,11 +482,23 @@ export default function twinSphere() {
             psv.markers.setMarkers(showHotspots ? this.hotspotMarkers() : this.stationMarkers());
         },
 
+        /** Station types the "Ukuran Air" filter keeps. */
+        get waterTypes() {
+            return ['water_level', 'water_quality', 'seepage', 'gate', 'piezometer', 'observation_well'];
+        },
+
+        setPinFilter(mode) {
+            this.pinFilter = mode;
+            this.syncPins();
+        },
+
         stationMarkers() {
             const baseCode = this.base?.code;
+            const water = this.waterTypes;
 
             return this.$store.site.markers
                 .filter((marker) => marker.code !== baseCode)
+                .filter((marker) => this.pinFilter !== 'air' || water.includes(marker.type))
                 .map((marker) => {
                     const color = statusColor(marker.status);
 
@@ -437,7 +508,12 @@ export default function twinSphere() {
                             yaw: (marker.sphere?.yaw ?? 0) * DEG,
                             pitch: (marker.sphere?.pitch ?? 0) * DEG,
                         },
-                        html: pinHtml(marker, color, marker.code === this.flyingTo),
+                        html: pinHtml(
+                            marker,
+                            color,
+                            marker.code === this.flyingTo,
+                            marker.code === this.highlighted,
+                        ),
                         anchor: 'center center',
                         zIndex: marker.code === this.$store.viewer.code ? 60 : 40,
                         data: { code: marker.code },
@@ -479,6 +555,8 @@ export default function twinSphere() {
 
                 const code = String(id).replace('station-', '');
                 const marker = this.$store.site.markerByCode(code);
+
+                this.clearHighlight();
 
                 this.pointAt(marker);
 
@@ -526,6 +604,8 @@ export default function twinSphere() {
             const sphere = this.$refs.sphere;
 
             sphere.addEventListener('pointerdown', (event) => {
+                this.clearHighlight();
+
                 const pin = event.target.closest?.('[data-station]');
 
                 if (!pin || !this.editMarkers || this.stationView) {
@@ -623,17 +703,41 @@ export default function twinSphere() {
 
             const sphere = this.$store.site.markerByCode(marker.code)?.sphere ?? marker.sphere;
 
+            this.highlight(marker.code);
             this.setRotating(false);
-            psv.flight = psv.viewer.animate({
+            psv.flight = settle(psv.viewer.animate({
                 yaw: (sphere?.yaw ?? 0) * DEG,
                 pitch: (sphere?.pitch ?? 0) * DEG,
                 zoom: 58,
                 speed: '6rpm',
-            });
+            }));
+        },
+
+        /** Turn the camera until the compass reads north. */
+        faceNorth() {
+            this.setRotating(false);
+            this.lookAt(-this.northOffset, 0);
+        },
+
+        /**
+         * Name a pin and keep it named. No timer: the search result should
+         * still be identifiable after the camera finishes turning, however long
+         * the reader takes to look. Touching the sphere clears it.
+         */
+        highlight(code) {
+            this.highlighted = code;
+            this.syncPins();
+        },
+
+        clearHighlight() {
+            if (this.highlighted) {
+                this.highlighted = null;
+                this.syncPins();
+            }
         },
 
         lookAt(yaw, pitch = 0) {
-            psv.viewer?.animate({ yaw: yaw * DEG, pitch: pitch * DEG, speed: '3rpm' });
+            settle(psv.viewer?.animate({ yaw: yaw * DEG, pitch: pitch * DEG, speed: '3rpm' }));
         },
 
         /**
@@ -665,10 +769,10 @@ export default function twinSphere() {
                 return;
             }
 
-            psv.viewer.animate({
+            settle(psv.viewer.animate({
                 zoom: Math.min(100, Math.max(0, psv.viewer.getZoomLevel() + delta)),
                 duration: 320,
-            });
+            }));
         },
 
         zoomIn() {
@@ -684,12 +788,12 @@ export default function twinSphere() {
 
             const stage = this.$store.site.environment?.stage;
 
-            psv.viewer?.animate({
+            settle(psv.viewer?.animate({
                 yaw: (panorama?.yaw ?? 0) * DEG,
                 pitch: (panorama?.pitch || (psv.showing?.code === this.base?.code ? stage?.default_pitch : 0) || 0) * DEG,
                 zoom: stage?.default_zoom ?? 45,
                 speed: '4rpm',
-            });
+            }));
         },
 
         setRotating(value) {
@@ -746,9 +850,11 @@ function capture(element, method, pointerId) {
 }
 
 /** One station pin: status-coloured dot plus its caption. */
-function pinHtml(marker, color, target = false) {
+function pinHtml(marker, color, target = false, highlight = false) {
+    const state = `${target ? ' is-target' : ''}${highlight ? ' is-highlight' : ''}`;
+
     return `
-        <div class="sphere-pin${target ? ' is-target' : ''}" data-station="${marker.code}">
+        <div class="sphere-pin${state}" data-station="${marker.code}">
             <span class="sphere-pin__dot" style="--pin:${color}">${iconSvg(marker.type, 13)}</span>
             <span class="sphere-pin__label">
                 <span class="sphere-pin__name">${marker.short_name ?? marker.name}</span>

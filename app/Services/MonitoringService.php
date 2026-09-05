@@ -109,6 +109,7 @@ class MonitoringService
                     'thumb' => $base->panoramaThumbUrl(),
                     'yaw' => (float) $base->panorama_yaw,
                     'pitch' => (float) $base->panorama_pitch,
+                    'north_offset' => $this->northOffset($base),
                 ],
                 'phases' => $this->basePhases($base),
             ] : null,
@@ -276,6 +277,7 @@ class MonitoringService
                     'preview' => $station->panoramaPreviewUrl(),
                     'yaw' => (float) $station->panorama_yaw,
                     'pitch' => (float) $station->panorama_pitch,
+                    'north_offset' => $this->northOffset($station),
                 ] : null,
                 'primary_metric' => $primary?->key,
                 'caption' => $primary && $value !== null
@@ -442,6 +444,20 @@ class MonitoringService
             'code' => $station->code,
             'sphere' => $this->spherePosition($station, $this->sphereOrigin()),
         ];
+    }
+
+    /**
+     * Where north sits inside a panorama, in degrees.
+     *
+     * The renders carry no orientation, so the compass needs telling. A station
+     * can hold its own `panorama_north_offset`; everything else falls back to
+     * the one figure in `dam.stage.north_offset`.
+     */
+    private function northOffset(SensorStation $station): float
+    {
+        $own = (float) $station->panorama_north_offset;
+
+        return $own !== 0.0 ? $own : (float) config('dam.stage.north_offset', 0);
     }
 
     /** The station whose panorama the stage opens on. */

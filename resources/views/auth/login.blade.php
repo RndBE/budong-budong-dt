@@ -36,13 +36,8 @@
 
     <div class="glass glass--panel viewer-enter relative z-10 w-[400px] p-7" x-data x-sheen>
         <div class="flex items-center gap-3">
-            <span class="grid size-12 place-items-center rounded-2xl bg-linear-to-br from-brand-400/90 to-brand-600/80">
-                <svg viewBox="0 0 32 32" class="size-7" aria-hidden="true">
-                    <path d="M6 6h6.5v13.5a5.5 5.5 0 0 1-5.5 5.5H6Z" fill="#ffd23f"/>
-                    <path d="M15.5 6H22a5.5 5.5 0 0 1 0 11h-6.5Z" fill="#fff"/>
-                    <path d="M15.5 19h6.5v6h-6.5Z" fill="#ffd23f" opacity=".85"/>
-                </svg>
-            </span>
+            <img src="{{ asset('assets/logopu.png') }}" alt="Logo Kementerian Pekerjaan Umum"
+                 class="size-12 shrink-0 rounded-2xl object-cover shadow-[0_16px_34px_-16px_rgba(2,8,20,.9)]">
             <div class="leading-tight">
                 <h1 class="text-[16px] font-extrabold tracking-tight text-white uppercase">Bendungan Budong Budong</h1>
                 <p class="text-[11px] font-semibold tracking-wide text-mist-200 uppercase">BWS Sulawesi V</p>
@@ -60,13 +55,13 @@
             <label class="block">
                 <span class="mb-1.5 block text-[11px] font-medium text-mist-300">Email</span>
                 <input type="email" name="email" value="{{ old('email', 'admin@bwssulawesi5.go.id') }}" required autofocus
-                       class="glass glass--inset w-full px-3.5 py-2.5 text-[13px] text-white focus:outline-none">
+                       class="glass glass--inset w-full px-3.5 py-2.5 text-[13px] text-white">
             </label>
 
             <label class="block">
                 <span class="mb-1.5 block text-[11px] font-medium text-mist-300">Kata Sandi</span>
                 <input type="password" name="password" required
-                       class="glass glass--inset w-full px-3.5 py-2.5 text-[13px] text-white focus:outline-none">
+                       class="glass glass--inset w-full px-3.5 py-2.5 text-[13px] text-white">
             </label>
 
             @error('email')

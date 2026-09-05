@@ -22,7 +22,7 @@
         </div>
     </div>
 
-    <div class="chrome-scale scroll-y absolute z-20 pr-1.5 max-sm:!bottom-[var(--stage-bottom)]"
+    <div class="chrome-scale chrome-slide scroll-y absolute z-20 pr-1.5 max-sm:!bottom-[var(--stage-bottom)]"
          style="top: var(--stage-top); bottom: var(--gap); left: var(--stage-left);
                 right: {{ $wide ? 'var(--gap)' : 'var(--stage-right)' }}">
         @if ($title)

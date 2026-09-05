@@ -2,13 +2,8 @@
 
     {{-- Identity --}}
     <div class="pointer-events-auto flex items-center gap-3 pl-1 pr-2">
-        <span class="grid size-11 place-items-center rounded-2xl bg-linear-to-br from-brand-400/90 to-brand-600/80 shadow-[0_14px_30px_-14px_rgba(31,139,245,.9)]">
-            <svg viewBox="0 0 32 32" class="size-7" aria-hidden="true">
-                <path d="M6 6h6.5v13.5a5.5 5.5 0 0 1-5.5 5.5H6Z" fill="#ffd23f"/>
-                <path d="M15.5 6H22a5.5 5.5 0 0 1 0 11h-6.5Z" fill="#fff"/>
-                <path d="M15.5 19h6.5v6h-6.5Z" fill="#ffd23f" opacity=".85"/>
-            </svg>
-        </span>
+        <img src="{{ asset('assets/logopu.png') }}" alt="Logo Kementerian Pekerjaan Umum"
+             class="size-11 shrink-0 rounded-2xl object-cover shadow-[0_14px_30px_-14px_rgba(2,8,20,.9)]">
         <div class="leading-tight">
             <h1 class="text-[19px] font-extrabold tracking-tight text-white uppercase max-lg:text-[15px] max-sm:text-[13px]">Bendungan Budong Budong</h1>
             <p class="text-[12px] font-semibold tracking-wide text-mist-200/90 uppercase max-sm:text-[10px]">BWS Sulawesi V</p>
@@ -70,7 +65,7 @@
 
     {{-- Actions --}}
     <div class="pointer-events-auto flex items-center gap-2.5">
-        <a href="{{ route('alerts') }}" class="glass glass--chip glass-button relative size-11" title="Peringatan">
+        <a href="{{ route('alerts') }}" class="glass glass--chip glass-button relative size-11" title="Peringatan" aria-label="Peringatan aktif">
             <x-icon name="bell" class="size-5"/>
             @php($activeAlerts = ($dashboard['alerts'] ?? null) ? count($dashboard['alerts']) : null)
             <span class="absolute -right-1 -top-1 grid size-5 place-items-center rounded-full bg-state-bahaya text-[10px] font-bold text-white shadow-lg"
@@ -78,7 +73,7 @@
             </span>
         </a>
 
-        <button type="button" class="glass glass--chip glass-button size-11" title="Bantuan"
+        <button type="button" class="glass glass--chip glass-button size-11" title="Bantuan" aria-label="Bantuan"
                 x-data @click="$dispatch('open-help')">
             <x-icon name="help" class="size-5"/>
         </button>
@@ -93,19 +88,30 @@
             </button>
 
             <div x-show="open" x-cloak x-transition.origin.top.right
-                 class="glass glass--panel absolute right-0 mt-2 w-60 p-2">
-                <div class="px-3 py-2">
-                    <p class="text-[13px] font-semibold text-white">{{ auth()->user()?->name }}</p>
-                    <p class="text-[11px] text-mist-300">{{ auth()->user()?->unit }}</p>
+                 class="glass glass--panel glass--menu absolute right-0 z-10 mt-2 w-64 p-1.5">
+                <div class="flex items-center gap-2.5 rounded-xl px-2.5 py-2">
+                    <span class="grid size-9 shrink-0 place-items-center rounded-full bg-brand-500/25 text-brand-200">
+                        <x-icon name="user" class="size-4"/>
+                    </span>
+                    <span class="min-w-0">
+                        <span class="block truncate text-[13px] font-semibold text-white">{{ auth()->user()?->name }}</span>
+                        <span class="block truncate text-[11px] text-mist-300">{{ auth()->user()?->unit }}</span>
+                    </span>
                 </div>
-                <div class="my-1 h-px bg-white/10"></div>
-                <a href="{{ route('settings') }}" class="nav-item text-[13px]">
-                    <x-icon name="cog" class="size-4"/> Pengaturan
+
+                <div class="my-1.5 h-px bg-white/10"></div>
+
+                <a href="{{ route('settings') }}" class="nav-item gap-2.5 text-[13px]">
+                    <x-icon name="cog" class="size-4 shrink-0"/>
+                    Pengaturan
                 </a>
+
                 <form method="POST" action="{{ route('logout') }}">
                     @csrf
-                    <button type="submit" class="nav-item w-full text-left text-[13px] text-state-bahaya/90">
-                        <x-icon name="logout" class="size-4"/> Keluar
+                    <button type="submit"
+                            class="nav-item w-full gap-2.5 text-left text-[13px] text-state-bahaya hover:bg-state-bahaya/12">
+                        <x-icon name="logout" class="size-4 shrink-0"/>
+                        Keluar
                     </button>
                 </form>
             </div>

@@ -585,9 +585,14 @@ Alpine.data('thresholdForm', (metrics) => ({
     rows: metrics,
     saving: false,
     saved: false,
+    failed: false,
+
+    /** Rows touched since the last save, so edits cannot be lost silently. */
+    dirty: new Set(),
 
     async save() {
         this.saving = true;
+        this.failed = false;
 
         try {
             await postJson('/api/settings', {
@@ -599,10 +604,13 @@ Alpine.data('thresholdForm', (metrics) => ({
                 })),
             });
 
+            this.dirty.clear();
             this.saved = true;
             window.setTimeout(() => {
                 this.saved = false;
             }, 2400);
+        } catch {
+            this.failed = true;
         } finally {
             this.saving = false;
         }

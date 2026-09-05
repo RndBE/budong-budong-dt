@@ -8,12 +8,12 @@
         <x-slot:actions>
             <div class="glass glass--chip flex items-center gap-1 p-1.5">
                 <a href="{{ route('alerts') }}"
-                   class="rounded-xl px-3 py-1.5 text-[12px] font-semibold transition {{ $level ? 'text-mist-300 hover:bg-white/8' : 'bg-brand-500/90 text-white' }}">
+                   class="rounded-xl px-3 py-1.5 max-sm:px-4 max-sm:py-3 text-[12px] font-semibold transition {{ $level ? 'text-mist-300 hover:bg-white/8' : 'bg-brand-500/90 text-white' }}">
                     Semua
                 </a>
                 @foreach (['waspada', 'siaga', 'bahaya'] as $option)
                     <a href="{{ route('alerts', ['level' => $option]) }}"
-                       class="rounded-xl px-3 py-1.5 text-[12px] font-semibold capitalize transition {{ $level === $option ? 'bg-brand-500/90 text-white' : 'text-mist-300 hover:bg-white/8' }}">
+                       class="rounded-xl px-3 py-1.5 max-sm:px-4 max-sm:py-3 text-[12px] font-semibold capitalize transition {{ $level === $option ? 'bg-brand-500/90 text-white' : 'text-mist-300 hover:bg-white/8' }}">
                         {{ $option }}
                     </a>
                 @endforeach
@@ -44,7 +44,7 @@
                     </tr>
                 </thead>
                 <tbody class="divide-y divide-white/6">
-                    @foreach ($alerts as $alert)
+                    @forelse ($alerts as $alert)
                         @php($color = config("dam.statuses.{$alert->level}.color", '#fbbf24'))
                         <tr class="align-top transition hover:bg-white/5">
                             <td class="tnum px-4 py-3 text-[12px] text-mist-200 whitespace-nowrap">
@@ -102,7 +102,16 @@
                                 @endunless
                             </td>
                         </tr>
-                    @endforeach
+                    @empty
+                        <tr>
+                            <td colspan="6" class="px-4 py-10 text-center">
+                                <p class="text-[13px] font-semibold text-white">Tidak ada peringatan</p>
+                                <p class="mt-1 text-[11.5px] text-mist-300">
+                                    Seluruh parameter berada di bawah ambang batas untuk filter ini.
+                                </p>
+                            </td>
+                        </tr>
+                    @endforelse
                 </tbody>
             </table>
             </div>

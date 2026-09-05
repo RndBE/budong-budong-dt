@@ -125,5 +125,5 @@
 @endsection
 
 @section('panel')
-    @include('partials.right.summary')
+    @include('partials.right.summary', ['skipPrimary' => true])
 @endsection

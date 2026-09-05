@@ -57,15 +57,23 @@
     .app-frame {
         --gap: clamp(12px, 0.9vw, 22px);
         --rail-w: 64px;
-        --panel-w: clamp(316px, 24vw, 470px);
+        --rail-compact-w: 64px;
+        --panel-w-open: clamp(316px, 24vw, 470px);
+        --panel-w: var(--panel-w-open);
         --monitor-w: clamp(184px, 14vw, 232px);
         --header-h: clamp(88px, 4.6vw + 30px, 132px);
+
+        /*
+         * The compass sits in the top-left corner of the stage; anything else
+         * that starts on that edge has to step around it.
+         */
+        --compass-w: 0px;
 
         /* Clear area between the rail and the summary panel. */
         --stage-left: calc(var(--rail-w) + var(--gap) * 2);
         --stage-right: calc(var(--panel-w) + var(--gap) * 2);
         --stage-top: var(--header-h);
-        --stage-bottom: calc(var(--gap) * 2 + 20px);
+        --stage-bottom: calc(var(--gap) + 2px);
 
         /* Everything in the chrome scales together on big monitors. */
         --ui-zoom: 1;
@@ -106,6 +114,13 @@
         }
     }
 
+    /* The compass only exists from `sm` upwards. */
+    @media (min-width: 640px) {
+        .app-frame {
+            --compass-w: 78px;
+        }
+    }
+
     /* Wide enough for the rail to carry labels. */
     @media (min-width: 1440px) {
         .app-frame {
@@ -113,10 +128,64 @@
         }
     }
 
+    /*
+     * Ringkas: the whole column narrows to its icons. Driving it from the frame
+     * keeps the rail, the stage inset and the summary panel in agreement — the
+     * rail measures `--rail-w`, so one variable moves all of them.
+     */
+    .app-frame--rail-compact {
+        --rail-w: var(--rail-compact-w);
+    }
+
+    /*
+     * The summary panel folds away the same way, but only where it owns a
+     * column: below xl it is already a slide-over with its own toggle.
+     */
+    @media (min-width: 1280px) {
+        .app-frame--panel-collapsed {
+            --panel-w: 0px;
+        }
+    }
+
+    /*
+     * Anything positioned off `--stage-*` or `--panel-w` glides when those
+     * change, so folding a panel moves the whole layout as one gesture rather
+     * than snapping the content and animating only the panel itself.
+     */
+    .chrome-slide {
+        transition:
+            left 320ms cubic-bezier(0.4, 0, 0.2, 1),
+            right 320ms cubic-bezier(0.4, 0, 0.2, 1),
+            width 320ms cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        .chrome-slide {
+            transition: none;
+        }
+    }
+
+    /*
+     * A short window scrolls the column instead of stacking it on itself. The
+     * scrollbar is hidden rather than thin: a gutter would eat ten pixels off
+     * every label in the menu.
+     */
+    .rail-column {
+        overflow: hidden auto;
+        overscroll-behavior: contain;
+        scrollbar-width: none;
+    }
+
+    .rail-column::-webkit-scrollbar {
+        width: 0;
+        height: 0;
+    }
+
     /* Below xl the summary panel slides over the stage instead of reserving a column. */
     @media (max-width: 1279px) {
         .app-frame {
-            --panel-w: min(400px, 86vw);
+            --panel-w-open: min(400px, 86vw);
+            --panel-w: var(--panel-w-open);
             --stage-right: var(--gap);
         }
     }
@@ -126,7 +195,8 @@
         .app-frame {
             --gap: 10px;
             --rail-w: 56px;
-            --panel-w: min(380px, 92vw);
+            --panel-w-open: min(380px, 92vw);
+            --panel-w: var(--panel-w-open);
             --header-h: clamp(74px, 11vw, 96px);
         }
     }
@@ -139,7 +209,8 @@
         .app-frame {
             --gap: 8px;
             --rail-w: 0px;
-            --panel-w: 100vw;
+            --panel-w-open: 100vw;
+            --panel-w: var(--panel-w-open);
             --header-h: 64px;
             --stage-left: var(--gap);
             --stage-bottom: 84px;
@@ -329,6 +400,22 @@
         --glass-blur: 30px;
     }
 
+    /*
+     * Menus that open over another glass panel. The default translucency lets
+     * the panel underneath read straight through the items, so these get a
+     * heavier plate and a stronger blur.
+     */
+    .glass--menu {
+        /* Practically opaque: a menu over a panel of numbers has to be read,
+           and Chromium drops the backdrop blur inside the zoomed chrome. */
+        --glass-alpha: 0.96;
+        --glass-blur: 40px;
+        box-shadow:
+            inset 0 1px 0 rgb(255 255 255 / 0.16),
+            inset 0 0 0 1px rgb(255 255 255 / 0.08),
+            0 26px 60px -24px rgb(2 8 20 / 0.95);
+    }
+
     .glass--rail {
         --glass-alpha: 0.34;
         --glass-blur: 34px;
@@ -355,6 +442,23 @@
 
     .glass--flat::after {
         display: none;
+    }
+
+    /*
+     * Keyboard focus. The chrome is dark glass over a photograph, where the
+     * browser default outline disappears; this pairs a bright ring with a dark
+     * halo so it survives both a bright sky and a black reservoir.
+     */
+    a:focus-visible,
+    button:focus-visible,
+    input:focus-visible,
+    select:focus-visible,
+    textarea:focus-visible,
+    summary:focus-visible,
+    [tabindex]:focus-visible {
+        outline: 2px solid #7cc4ff;
+        outline-offset: 2px;
+        box-shadow: 0 0 0 5px rgb(3 11 20 / 0.55);
     }
 
     /* Interactive elements --------------------------------------- */
@@ -700,6 +804,30 @@
 .sphere-pin.is-target .sphere-pin__label {
     opacity: 1;
     filter: brightness(1.2);
+}
+
+/* Pointed out by a search: keep its name up even with labels switched off. */
+.sphere-pin.is-highlight .sphere-pin__label,
+.sphere--quiet .sphere-pin.is-highlight .sphere-pin__label {
+    opacity: 1;
+    box-shadow:
+        inset 0 0 0 1px color-mix(in srgb, var(--pin, #47a6ff) 55%, transparent),
+        0 12px 26px -14px rgb(2 8 20 / 0.9);
+}
+
+.sphere-pin.is-highlight .sphere-pin__dot {
+    animation: sphere-found 1.6s ease-out 2;
+}
+
+@keyframes sphere-found {
+    0%, 100% { box-shadow: 0 0 0 3px rgb(255 255 255 / 0.22), 0 14px 26px -12px rgb(2 8 20 / 0.9); }
+    50% { box-shadow: 0 0 0 5px rgb(255 255 255 / 0.5), 0 0 0 16px color-mix(in srgb, var(--pin, #47a6ff) 32%, transparent); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .sphere-pin.is-highlight .sphere-pin__dot {
+        animation: none;
+    }
 }
 
 /* Label pill off: the caption only appears under the pointer. */

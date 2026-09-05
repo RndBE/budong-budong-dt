@@ -35,6 +35,13 @@ return [
     'stage' => [
         'base_station' => 'base-dam',
         'default_zoom' => 45,
+
+        /*
+        | Where north sits in the panorama, in degrees. The renders are not
+        | oriented, so this rotates the compass until its needle matches the
+        | real bearing; a station can override it with `panorama_north_offset`.
+        */
+        'north_offset' => 0.0,
         'default_pitch' => -12,  // most pins hang below the horizon
 
         'sphere' => [

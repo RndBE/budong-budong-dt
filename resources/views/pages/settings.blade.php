@@ -121,7 +121,10 @@
                     <p class="text-[11.5px] text-mist-300">Perubahan langsung dipakai untuk klasifikasi status dan pembangkitan peringatan.</p>
                 </div>
                 <div class="flex items-center gap-2.5">
+                    <span class="text-[11.5px] text-state-waspada" x-show="dirty.size > 0 && !saved" x-cloak
+                          x-text="`${dirty.size} nilai belum disimpan`"></span>
                     <span class="text-[11.5px] text-state-normal" x-show="saved" x-cloak>Tersimpan</span>
+                    <span class="text-[11.5px] text-state-bahaya" x-show="failed" x-cloak>Gagal menyimpan — coba lagi</span>
                     <button type="button" class="glass glass--chip glass-button px-4 py-2 text-[12px] font-semibold"
                             :disabled="saving" @click="save()">
                         <x-icon name="save" class="size-4"/>
@@ -151,15 +154,24 @@
                                 </td>
                                 <td class="px-4 py-2">
                                     <input type="number" step="any" x-model.number="row.warning_threshold"
-                                           class="tnum glass glass--inset w-24 px-2 py-1 text-[12px] text-state-waspada focus:outline-none">
+                                           :aria-label="`Ambang Waspada — ${row.station}, ${row.label}`"
+                                           :class="dirty.has(row.id) && 'ring-1 ring-brand-400/60'"
+                                           @input="dirty.add(row.id)"
+                                           class="tnum glass glass--inset w-24 px-2 py-1 text-[12px] text-state-waspada">
                                 </td>
                                 <td class="px-4 py-2">
                                     <input type="number" step="any" x-model.number="row.alert_threshold"
-                                           class="tnum glass glass--inset w-24 px-2 py-1 text-[12px] text-state-siaga focus:outline-none">
+                                           :aria-label="`Ambang Siaga — ${row.station}, ${row.label}`"
+                                           :class="dirty.has(row.id) && 'ring-1 ring-brand-400/60'"
+                                           @input="dirty.add(row.id)"
+                                           class="tnum glass glass--inset w-24 px-2 py-1 text-[12px] text-state-siaga">
                                 </td>
                                 <td class="px-4 py-2">
                                     <input type="number" step="any" x-model.number="row.critical_threshold"
-                                           class="tnum glass glass--inset w-24 px-2 py-1 text-[12px] text-state-bahaya focus:outline-none">
+                                           :aria-label="`Ambang Bahaya — ${row.station}, ${row.label}`"
+                                           :class="dirty.has(row.id) && 'ring-1 ring-brand-400/60'"
+                                           @input="dirty.add(row.id)"
+                                           class="tnum glass glass--inset w-24 px-2 py-1 text-[12px] text-state-bahaya">
                                 </td>
                             </tr>
                         </template>

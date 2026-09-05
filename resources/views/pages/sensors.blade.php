@@ -8,19 +8,21 @@
         <x-slot:actions>
             <div class="glass glass--chip flex max-w-full flex-wrap items-center gap-1 overflow-x-auto p-1.5">
                 <a href="{{ route('sensors') }}"
-                   class="rounded-xl px-3 py-1.5 text-[12px] font-semibold transition {{ $activeType ? 'text-mist-300 hover:bg-white/8' : 'bg-brand-500/90 text-white' }}">
+                   class="rounded-xl px-3 py-1.5 text-[12px] font-semibold transition max-sm:px-4 max-sm:py-3 {{ $activeType ? 'text-mist-300 hover:bg-white/8' : 'bg-brand-500/90 text-white' }}">
                     Semua
                 </a>
                 @foreach ($types as $type => $label)
                     <a href="{{ route('sensors', ['tipe' => $type]) }}"
-                       class="rounded-xl px-3 py-1.5 text-[12px] font-semibold transition {{ $activeType === $type ? 'bg-brand-500/90 text-white' : 'text-mist-300 hover:bg-white/8' }}">
+                       class="rounded-xl px-3 py-1.5 text-[12px] font-semibold transition max-sm:px-4 max-sm:py-3 {{ $activeType === $type ? 'bg-brand-500/90 text-white' : 'text-mist-300 hover:bg-white/8' }}">
                         {{ $label }}
                     </a>
                 @endforeach
             </div>
         </x-slot:actions>
 
-        <div class="glass glass--panel overflow-hidden p-0" x-sheen>
+        {{-- A sixteen-column table on a 375px screen turns every station name
+             into five lines, so phones get the same rows as cards instead. --}}
+        <div class="glass glass--panel overflow-hidden p-0 max-sm:hidden" x-sheen>
             <div class="table-scroll">
             <table class="w-full border-collapse text-left">
                 <thead>
@@ -34,7 +36,7 @@
                     </tr>
                 </thead>
                 <tbody class="divide-y divide-white/6">
-                    @foreach ($stations as $station)
+                    @forelse ($stations as $station)
                         <tr class="transition hover:bg-white/5">
                             <td class="px-4 py-3">
                                 <p class="text-[13px] font-semibold text-white">{{ $station['name'] }}</p>
@@ -66,11 +68,66 @@
                                 </div>
                             </td>
                         </tr>
-                    @endforeach
+                    @empty
+                        <tr>
+                            <td colspan="6" class="px-4 py-10 text-center">
+                                <p class="text-[13px] font-semibold text-white">Tidak ada stasiun pada filter ini</p>
+                                <p class="mt-1 text-[11.5px] text-mist-300">Pilih tipe lain atau kembali ke “Semua”.</p>
+                            </td>
+                        </tr>
+                    @endforelse
                 </tbody>
             </table>
             </div>
         </div>
+        <ul class="space-y-2.5 sm:hidden">
+            @forelse ($stations as $station)
+                <li class="glass glass--panel p-3.5" x-sheen>
+                    <div class="flex items-start justify-between gap-2">
+                        <div class="min-w-0">
+                            <p class="truncate text-[13.5px] font-semibold text-white">{{ $station['name'] }}</p>
+                            <p class="text-[11px] text-mist-400">
+                                {{ strtoupper($station['code']) }} · {{ $station['type_label'] }}
+                            </p>
+                        </div>
+                        <span class="inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold"
+                              style="background: {{ config("dam.statuses.{$station['status']}.color") }}1f;
+                                     color: {{ config("dam.statuses.{$station['status']}.color") }}">
+                            <span class="status-dot" style="background: {{ config("dam.statuses.{$station['status']}.color") }}"></span>
+                            {{ $station['status_label'] }}
+                        </span>
+                    </div>
+
+                    <div class="mt-2 flex items-end justify-between gap-3">
+                        <div class="min-w-0">
+                            <p class="text-[10.5px] tracking-wide text-mist-400 uppercase">Parameter utama</p>
+                            <p class="tnum truncate text-[15px] font-semibold text-white">{{ $station['caption'] }}</p>
+                            <p class="truncate text-[11px] text-mist-300">{{ $station['zone'] ?? '—' }}</p>
+                        </div>
+
+                        <div class="flex shrink-0 items-center gap-1.5">
+                            @if ($station['has_panorama'])
+                                <a href="{{ route('twin.station', $station['code']) }}"
+                                   class="glass glass--chip glass-button px-3.5 py-2.5 text-[11.5px] font-semibold"
+                                   aria-label="Buka panorama 360° {{ $station['name'] }}">
+                                    <x-icon name="eye" class="size-3.5"/> 360°
+                                </a>
+                            @endif
+                            <a href="{{ route('analytics') }}?stasiun={{ $station['code'] }}"
+                               class="glass glass--chip glass-button px-3.5 py-2.5 text-[11.5px] font-semibold"
+                               aria-label="Lihat grafik {{ $station['name'] }}">
+                                <x-icon name="chart-line" class="size-3.5"/> Grafik
+                            </a>
+                        </div>
+                    </div>
+                </li>
+            @empty
+                <li class="glass glass--panel p-6 text-center" x-sheen>
+                    <p class="text-[13px] font-semibold text-white">Tidak ada stasiun pada filter ini</p>
+                    <p class="mt-1 text-[11.5px] text-mist-300">Pilih tipe lain atau kembali ke “Semua”.</p>
+                </li>
+            @endforelse
+        </ul>
     </x-page-shell>
 @endsection
 

@@ -22,45 +22,76 @@
     </filter>
 </svg>
 
-<div class="app-frame relative w-screen overflow-hidden"
-     x-data="{ panelOpen: false }"
-     x-init="$store.site.start(@js($boot), @js($dashboard ?? null))">
+{{-- `w-full`, never `w-screen`: 100vw includes the scrollbar, which pushes
+     every right-anchored panel that many pixels off the screen. --}}
+<div class="app-frame relative w-full overflow-hidden"
+     :class="{
+         'app-frame--rail-compact': compact,
+         'app-frame--panel-collapsed': panelCollapsed,
+     }"
+     x-data="{
+         panelOpen: false,
+         compact: JSON.parse(localStorage.getItem('rail-compact') ?? 'false'),
+         panelCollapsed: JSON.parse(localStorage.getItem('panel-collapsed') ?? 'false'),
+         togglePanel() {
+             this.panelCollapsed = !this.panelCollapsed;
+             localStorage.setItem('panel-collapsed', this.panelCollapsed);
+             $nextTick(() => window.dispatchEvent(new Event('resize')));
+         },
+         toggleRail() {
+             this.compact = !this.compact;
+             localStorage.setItem('rail-compact', this.compact);
+             $nextTick(() => window.dispatchEvent(new Event('resize')));
+         },
+     }"
+     x-init="$store.site.start(@js($boot), @js($dashboard ?? null))"
+     @keydown.escape.window="panelOpen = false">
 
     {{-- Stage: time-of-day map render, 3D twin, or the 360 panorama. --}}
     @yield('stage')
 
-    {{-- Chrome: floating glass over the stage. --}}
-    <header class="chrome-scale pointer-events-none absolute inset-x-0 top-0 z-30"
+    {{-- Chrome: floating glass over the stage. The header sits above the
+         summary panel so the user menu can hang over it. --}}
+    <header class="chrome-scale pointer-events-none absolute inset-x-0 top-0 z-50"
             data-chrome="header"
             style="padding: var(--gap) var(--gap) 0">
         @include('partials.topbar')
     </header>
 
-    {{-- Side rail on desktop, bottom bar on phones. --}}
-    <aside class="chrome-scale pointer-events-auto absolute z-30
+    {{-- One left column: menu at the top, system monitor pinned to the
+         bottom, both the width of the rail. On phones it flattens into the
+         bottom bar and the monitor drops out. --}}
+    <aside class="chrome-scale rail-column chrome-slide pointer-events-auto absolute z-30 flex flex-col gap-[var(--gap)]
                   max-sm:!left-[var(--gap)] max-sm:!right-[var(--gap)] max-sm:!top-auto
                   max-sm:!bottom-[var(--gap)] max-sm:!w-auto"
            data-chrome="rail"
-           style="left: var(--gap); top: var(--header-h); width: var(--rail-w)">
+           style="left: var(--gap); top: var(--header-h); bottom: var(--gap); width: var(--rail-w)">
         @include('partials.sidebar')
-    </aside>
 
-    @hasSection('rail-footer')
-        @yield('rail-footer')
-    @else
-        <div class="chrome-scale pointer-events-auto absolute z-30 max-xl:hidden max-lg:hidden"
-             style="left: var(--gap); bottom: var(--gap); width: var(--monitor-w)">
-            @include('partials.system-monitor')
-        </div>
-    @endif
+        @hasSection('rail-footer')
+            @yield('rail-footer')
+        @else
+            <div class="mt-auto shrink-0 max-sm:hidden" x-show="!compact" x-cloak>
+                @include('partials.system-monitor')
+            </div>
+        @endif
+    </aside>
 
     {{-- Summary / station panel. Below the xl breakpoint it slides over the
          stage instead of taking a column of its own. --}}
-    <section class="chrome-scale pointer-events-auto absolute z-30 transition-transform duration-300 max-xl:z-40"
+    <section class="chrome-scale pointer-events-auto absolute z-30 max-xl:z-40"
              data-chrome="panel"
-             style="right: var(--gap); top: var(--header-h); bottom: var(--gap); width: var(--panel-w);
-                    container-type: inline-size; container-name: panel"
-             :class="panelOpen ? 'max-xl:translate-x-0' : 'max-xl:translate-x-[calc(100%+28px)]'">
+             style="right: var(--gap); top: var(--header-h); bottom: var(--gap); width: var(--panel-w-open);
+                    container-type: inline-size; container-name: panel;
+                    transition: transform 320ms cubic-bezier(.4, 0, .2, 1), opacity 220ms linear"
+             {{-- Folded away means out of the tab order too, not just off-screen. --}}
+             :inert="panelCollapsed"
+             :aria-hidden="panelCollapsed"
+             :class="{
+                 'max-xl:translate-x-0': panelOpen,
+                 'max-xl:translate-x-[calc(100%+28px)]': !panelOpen,
+                 'xl:translate-x-[calc(100%+var(--gap))] xl:opacity-0': panelCollapsed,
+             }">
         @yield('panel')
     </section>
 
@@ -68,9 +99,23 @@
             class="chrome-scale glass glass--chip glass-button pointer-events-auto absolute z-40 hidden size-11 max-xl:grid"
             style="right: var(--gap); top: var(--header-h)"
             :title="panelOpen ? 'Tutup panel data' : 'Buka panel data'"
+            :aria-label="panelOpen ? 'Tutup panel data' : 'Buka panel data'"
+            :aria-expanded="panelOpen"
             @click="panelOpen = !panelOpen">
         <x-icon name="chart-bar" class="size-[18px]" x-show="!panelOpen"/>
         <x-icon name="x" class="size-[18px]" x-show="panelOpen" x-cloak/>
+    </button>
+
+    {{-- Desktop handle for folding the summary panel away. --}}
+    <button type="button"
+            class="chrome-scale chrome-slide glass glass--chip glass-button pointer-events-auto absolute z-40 hidden h-16 w-7 -translate-y-1/2 xl:grid"
+            style="right: calc(var(--panel-w) + var(--gap) * 1.7); top: 50%"
+            :title="panelCollapsed ? 'Tampilkan panel data' : 'Sembunyikan panel data'"
+            :aria-label="panelCollapsed ? 'Tampilkan panel data' : 'Sembunyikan panel data'"
+            :aria-expanded="!panelCollapsed"
+            @click="togglePanel()">
+        <x-icon name="chevrons-right" class="size-4 transition"
+                ::class="panelCollapsed ? 'rotate-180' : ''"/>
     </button>
 
     @yield('stage-controls')

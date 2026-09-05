@@ -4,9 +4,11 @@
 <div x-show="$store.viewer.open && !flying" x-cloak x-transition.opacity
      class="pointer-events-none absolute inset-0 z-20">
 
-    {{-- Station banner --}}
-    <div class="chrome-scale pointer-events-auto absolute flex flex-wrap items-center gap-2.5"
-         style="left: var(--stage-left); top: calc(var(--stage-top) + 8px); right: var(--stage-right)">
+    {{-- Station banner. It starts clear of the compass, which keeps its corner
+         in both the base view and a station panorama. --}}
+    <div class="chrome-scale chrome-slide pointer-events-auto absolute flex flex-wrap items-center gap-2.5"
+         style="left: calc(var(--stage-left) + var(--compass-w)); top: calc(var(--stage-top) + 8px);
+                right: var(--stage-right)">
         <button type="button" class="glass glass--chip glass-button gap-2 px-3.5 py-2.5 text-[12.5px] font-semibold"
                 @click="$store.viewer.close()">
             <x-icon name="arrow-left" class="size-4"/>
@@ -34,7 +36,7 @@
                 <button type="button"
                         class="grid size-8 place-items-center rounded-xl transition"
                         :class="$store.viewer.code === marker.code ? 'bg-brand-500/85 text-white' : 'text-mist-300 hover:bg-white/10'"
-                        :title="marker.name"
+                        :title="marker.name" :aria-label="`Buka panorama ${marker.name}`"
                         @click="$store.viewer.open360(marker.code)">
                     <span x-html="window.iconSvg(marker.type, 14)"></span>
                 </button>
@@ -43,7 +45,7 @@
     </div>
 
     {{-- Metric strip along the bottom --}}
-    <div class="chrome-scale pointer-events-auto absolute -translate-x-1/2 max-sm:hidden"
+    <div class="chrome-scale chrome-slide pointer-events-auto absolute -translate-x-1/2 max-sm:hidden"
          style="bottom: var(--stage-bottom);
                 left: calc(var(--stage-left) + (100vw - var(--stage-left) - var(--stage-right)) / 2)">
         <div class="glass glass--chip flex items-center gap-1 p-1.5" x-sheen>

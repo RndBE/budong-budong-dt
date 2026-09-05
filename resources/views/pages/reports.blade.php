@@ -12,7 +12,7 @@
             <div class="grid grid-cols-2 gap-3 max-sm:grid-cols-1">
                 <label>
                     <span class="mb-1.5 block text-[11px] font-medium text-mist-300">Periode</span>
-                    <select class="glass glass--inset w-full appearance-none px-3.5 py-2.5 text-[12.5px] text-white focus:outline-none"
+                    <select class="glass glass--inset w-full appearance-none px-3.5 py-2.5 text-[12.5px] text-white"
                             x-model="period">
                         <option class="bg-ink-800" value="harian">Harian</option>
                         <option class="bg-ink-800" value="mingguan">Mingguan</option>
@@ -23,7 +23,7 @@
 
                 <label>
                     <span class="mb-1.5 block text-[11px] font-medium text-mist-300">Format</span>
-                    <select class="glass glass--inset w-full appearance-none px-3.5 py-2.5 text-[12.5px] text-white focus:outline-none"
+                    <select class="glass glass--inset w-full appearance-none px-3.5 py-2.5 text-[12.5px] text-white"
                             x-model="format">
                         <option class="bg-ink-800" value="pdf">PDF ringkasan</option>
                         <option class="bg-ink-800" value="csv">CSV data mentah</option>
@@ -33,13 +33,13 @@
                 <label>
                     <span class="mb-1.5 block text-[11px] font-medium text-mist-300">Mulai</span>
                     <input type="date" x-model="start"
-                           class="glass glass--inset w-full px-3.5 py-2.5 text-[12.5px] text-white focus:outline-none">
+                           class="glass glass--inset w-full px-3.5 py-2.5 text-[12.5px] text-white">
                 </label>
 
                 <label>
                     <span class="mb-1.5 block text-[11px] font-medium text-mist-300">Sampai</span>
                     <input type="date" x-model="end"
-                           class="glass glass--inset w-full px-3.5 py-2.5 text-[12.5px] text-white focus:outline-none">
+                           class="glass glass--inset w-full px-3.5 py-2.5 text-[12.5px] text-white">
                 </label>
             </div>
 
@@ -68,6 +68,9 @@
                     <span x-text="busy ? 'Menyusun laporan…' : 'Buat & Unduh'"></span>
                 </button>
                 <p class="text-[11.5px] text-state-bahaya" x-show="error" x-text="error"></p>
+                <p class="text-[11.5px] text-state-normal" x-show="result && !busy && !error" x-cloak>
+                    Laporan dibuat dan mulai diunduh — juga tersimpan di riwayat di bawah.
+                </p>
             </div>
         </div>
 
