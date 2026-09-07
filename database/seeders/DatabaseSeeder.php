@@ -10,6 +10,9 @@ class DatabaseSeeder extends Seeder
 {
     public function run(): void
     {
+        // Roles first: a user row points at one by slug.
+        $this->call(RoleSeeder::class);
+
         User::query()->updateOrCreate(
             ['email' => 'admin@bwssulawesi5.go.id'],
             [

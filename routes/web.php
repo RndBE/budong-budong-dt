@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\AccessController;
 use App\Http\Controllers\Api\AlertController;
 use App\Http\Controllers\Api\DashboardDataController;
 use App\Http\Controllers\Api\EnvironmentController;
@@ -39,10 +40,28 @@ Route::middleware('auth')->group(function () {
     Route::get('/peta/{station}', fn (string $station) => redirect()->route('twin.station', $station));
     Route::get('/sensor', [PageController::class, 'sensors'])->name('sensors');
     Route::get('/analisa', [PageController::class, 'analytics'])->name('analytics');
-    Route::get('/perawatan', [PageController::class, 'maintenance'])->name('maintenance');
+    Route::get('/perawatan', [PageController::class, 'maintenance'])->middleware('can:maintenance.view')->name('maintenance');
     Route::get('/peringatan', [PageController::class, 'alerts'])->name('alerts');
     Route::get('/laporan', [PageController::class, 'reports'])->name('reports');
     Route::get('/pengaturan', [PageController::class, 'settings'])->name('settings');
+
+    /*
+    | Accounts and access. The whole screen is behind `users.manage`; the role
+    | forms are additionally behind `roles.manage`, so an account can be
+    | allowed to add people without being allowed to widen what a role may do.
+    */
+    Route::middleware('can:users.manage')->group(function () {
+        Route::get('/pengguna', [AccessController::class, 'index'])->name('users');
+        Route::post('/pengguna', [AccessController::class, 'storeUser'])->name('users.store');
+        Route::put('/pengguna/{user}', [AccessController::class, 'updateUser'])->name('users.update');
+        Route::delete('/pengguna/{user}', [AccessController::class, 'destroyUser'])->name('users.destroy');
+    });
+
+    Route::middleware('can:roles.manage')->group(function () {
+        Route::post('/peran', [AccessController::class, 'storeRole'])->name('roles.store');
+        Route::put('/peran/{role}', [AccessController::class, 'updateRole'])->name('roles.update');
+        Route::delete('/peran/{role}', [AccessController::class, 'destroyRole'])->name('roles.destroy');
+    });
 
     /*
     | Browser JSON endpoints. Session authenticated: the dashboard polls these
@@ -55,17 +74,22 @@ Route::middleware('auth')->group(function () {
         Route::get('/stations', [StationController::class, 'index'])->name('stations.index');
         Route::get('/stations/{code}', [StationController::class, 'show'])->name('stations.show');
         Route::get('/stations/{code}/series/{metric}', [StationController::class, 'series'])->name('stations.series');
-        Route::post('/stations/{code}/position', [StationController::class, 'move'])->name('stations.move');
-        Route::post('/stations/{code}/sphere', [StationController::class, 'sphere'])->name('stations.sphere');
+        Route::post('/stations/{code}/position', [StationController::class, 'move'])->middleware('can:stations.move')->name('stations.move');
+        Route::post('/stations/{code}/sphere', [StationController::class, 'sphere'])->middleware('can:stations.move')->name('stations.sphere');
         Route::get('/alerts', [AlertController::class, 'index'])->name('alerts.index');
-        Route::post('/alerts/{alert}/acknowledge', [AlertController::class, 'acknowledge'])->name('alerts.acknowledge');
-        Route::post('/alerts/{alert}/resolve', [AlertController::class, 'resolve'])->name('alerts.resolve');
+        Route::post('/alerts/{alert}/acknowledge', [AlertController::class, 'acknowledge'])->middleware('can:alerts.handle')->name('alerts.acknowledge');
+        Route::post('/alerts/{alert}/resolve', [AlertController::class, 'resolve'])->middleware('can:alerts.handle')->name('alerts.resolve');
         Route::get('/maintenance', [MaintenanceController::class, 'index'])->name('maintenance.index');
-        Route::post('/maintenance/{task}/status', [MaintenanceController::class, 'updateStatus'])->name('maintenance.status');
+        Route::post('/maintenance/{task}/status', [MaintenanceController::class, 'updateStatus'])->middleware('can:maintenance.status')->name('maintenance.status');
+        Route::get('/maintenance/tickets', [MaintenanceController::class, 'tickets'])->middleware('can:maintenance.view')->name('maintenance.tickets');
+        Route::get('/maintenance/history', [MaintenanceController::class, 'history'])->middleware('can:maintenance.view')->name('maintenance.history');
+        Route::post('/maintenance/requests', [MaintenanceController::class, 'request'])->middleware('can:maintenance.request')->name('maintenance.request');
+        Route::post('/maintenance/{task}/messages', [MaintenanceController::class, 'message'])->middleware('can:maintenance.reply')->name('maintenance.message');
+        Route::post('/maintenance/{task}/read', [MaintenanceController::class, 'read'])->middleware('can:maintenance.view')->name('maintenance.read');
         Route::get('/reports', [ReportController::class, 'index'])->name('reports.index');
-        Route::post('/reports', [ReportController::class, 'store'])->name('reports.store');
+        Route::post('/reports', [ReportController::class, 'store'])->middleware('can:reports.create')->name('reports.store');
         Route::get('/reports/{report}/download', [ReportController::class, 'download'])->name('reports.download');
         Route::get('/settings', [SettingController::class, 'index'])->name('settings.index');
-        Route::post('/settings', [SettingController::class, 'store'])->name('settings.store');
+        Route::post('/settings', [SettingController::class, 'store'])->middleware('can:thresholds.edit')->name('settings.store');
     });
 });

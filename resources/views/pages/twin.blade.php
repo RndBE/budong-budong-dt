@@ -1,6 +1,6 @@
 @extends('layouts.app')
 
-@section('title', '3D Digital Twin')
+@section('title', 'Digital Twin')
 
 @section('stage')
     {{-- The stage is the dam's own 360 panorama: station pins live inside the
@@ -10,10 +10,15 @@
          x-init="initSphere()"
          @destroy="destroySphere()"
          @look-at.window="lookAt($event.detail.yaw, $event.detail.pitch)"
-         @keydown.escape.window="$store.viewer.open && $store.viewer.close()">
+         @keydown.escape.window="$store.viewer.open && $store.viewer.close()"
+         @focus-station.window="focusMarker($store.site.markerByCode($event.detail))">
 
         <div class="absolute inset-0"
-             :class="{ 'sphere--quiet': !showLabels, 'sphere--placing': editMarkers && !$store.viewer.open }">
+             :class="{
+                 'sphere--quiet': !showLabels,
+                 'sphere--placing': editMarkers && !$store.viewer.open,
+                 'sphere--departing': departing,
+             }">
 
             {{-- Photo Sphere Viewer mounts here. The solar grade is applied to
                  the whole canvas so the panorama follows the time of day. --}}
@@ -106,40 +111,11 @@
                 <span class="tnum text-[10px] font-semibold text-mist-200" x-text="compassLabel">0° U</span>
             </button>
 
-            {{-- Search: picking a result turns the camera to that station --}}
-            <div class="pointer-events-auto absolute left-1/2 top-2 w-[290px] -translate-x-1/2
-                        max-sm:left-0 max-sm:w-[calc(100%-56px)] max-sm:translate-x-0"
-                 x-show="!$store.viewer.open"
-                 x-data="{ query: '', open: false }">
-                <div class="glass glass--chip flex items-center gap-2.5 px-4 py-2.5" x-sheen>
-                    <x-icon name="search" class="size-4 text-mist-300"/>
-                    <input type="search" placeholder="Cari Lokasi"
-                           class="w-full bg-transparent text-[13px] text-white placeholder:text-mist-300"
-                           x-model="query" @focus="open = true" @click.outside="open = false">
-                </div>
-
-                <div x-show="open && query.length > 0" x-cloak x-transition
-                     class="glass glass--panel absolute inset-x-0 top-[52px] max-h-[280px] overflow-y-auto p-1.5">
-                    <template x-for="marker in $store.site.markers.filter(m => (m.name + m.code + m.zone).toLowerCase().includes(query.toLowerCase()))"
-                              :key="marker.code">
-                        <button type="button" class="nav-item w-full text-left"
-                                @click="query = ''; open = false; focusMarker(marker)">
-                            <span class="status-dot" :style="`background:${window.statusColor(marker.status)}`"></span>
-                            <span class="min-w-0 flex-1">
-                                <span class="block truncate text-[12.5px] text-mist-100" x-text="marker.name"></span>
-                                <span class="block truncate text-[10.5px] text-mist-400" x-text="marker.type_label + ' · ' + (marker.zone ?? '')"></span>
-                            </span>
-                        </button>
-                    </template>
-                    <p class="px-3 py-2 text-[11.5px] text-mist-400"
-                       x-show="$store.site.markers.filter(m => (m.name + m.code).toLowerCase().includes(query.toLowerCase())).length === 0">
-                        Lokasi tidak ditemukan.
-                    </p>
-                </div>
-            </div>
-
             {{-- Camera controls --}}
             <div class="pointer-events-auto absolute bottom-2 right-2 flex flex-col gap-2">
+                {{-- Placing pins writes to the station record, so it follows
+                     the `stations.move` ability. --}}
+                @can('stations.move')
                 <button type="button" class="glass glass--chip glass-button size-11"
                         x-show="!$store.viewer.open"
                         :class="editMarkers && 'text-brand-300 ring-1 ring-brand-400/60'"
@@ -149,6 +125,7 @@
                         @click="toggleMarkerEditing()">
                     <x-icon name="map-pin" class="size-[18px]"/>
                 </button>
+                @endcan
 
                 <button type="button" class="glass glass--chip glass-button size-11"
                         :class="rotating && 'text-brand-300'" title="Putar otomatis" aria-label="Putar otomatis" @click="toggleRotate()">
@@ -159,12 +136,15 @@
                     <x-icon name="crosshair" class="size-[18px]"/>
                 </button>
 
-                <div class="glass glass--chip glass-button flex flex-col overflow-hidden">
-                    <button type="button" class="grid size-11 place-items-center transition hover:bg-white/10" title="Perbesar" aria-label="Perbesar" @click="zoomIn()">
+                {{-- One stepper, not two buttons: the divider runs edge to edge
+                     and each half is 40px tall — still a comfortable target,
+                     without the airy gap around the glyphs. --}}
+                <div class="glass glass--chip flex w-11 flex-col overflow-hidden text-mist-100">
+                    <button type="button" class="grid h-10 w-full place-items-center transition hover:bg-white/10" title="Perbesar" aria-label="Perbesar" @click="zoomIn()">
                         <x-icon name="plus" class="size-[18px]"/>
                     </button>
-                    <span class="mx-2 h-px bg-white/12"></span>
-                    <button type="button" class="grid size-11 place-items-center transition hover:bg-white/10" title="Perkecil" aria-label="Perkecil" @click="zoomOut()">
+                    <span class="h-px w-full bg-white/12"></span>
+                    <button type="button" class="grid h-10 w-full place-items-center transition hover:bg-white/10" title="Perkecil" aria-label="Perkecil" @click="zoomOut()">
                         <x-icon name="minus" class="size-[18px]"/>
                     </button>
                 </div>
@@ -182,7 +162,6 @@
                     @php
                         $modes = [
                             ['key' => 'sensor', 'label' => 'Lokasi Sensor', 'icon' => 'map-pin', 'hint' => 'Tampilkan semua stasiun'],
-                            ['key' => 'air', 'label' => 'Ukuran Air', 'icon' => 'waves', 'hint' => 'Hanya stasiun yang mengukur air'],
                         ];
                     @endphp
                     @foreach ($modes as $mode)

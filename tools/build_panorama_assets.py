@@ -40,12 +40,14 @@ MASTER_DIR = Path(r"D:\BE Software\Panoramic 360 HD") / "panorama"
 OUT_DIR = Path(__file__).resolve().parent.parent / "public" / "assets" / "panorama"
 
 # Delivery widths (height is always half: strict 2:1 equirectangular).
-HD_WIDTH = 5120          # upscaled sources
-NATIVE_HD_WIDTH = 6144   # sources that already hold that much real detail
-PREVIEW_WIDTH = 1024
+# The sources are 1774px wide; four-times upscaling invents everything past
+# ~4096, so a wider delivery only stores upscaler noise at twice the bytes.
+HD_WIDTH = 4096
+NATIVE_HD_WIDTH = 4096
+PREVIEW_WIDTH = 2048   # the sphere is shown at this size while the HD loads
 THUMB = (560, 280)
 
-QUALITY_HD = 90
+QUALITY_HD = 82
 QUALITY_PREVIEW = 72
 QUALITY_THUMB = 80
 

@@ -125,15 +125,19 @@
                           x-text="`${dirty.size} nilai belum disimpan`"></span>
                     <span class="text-[11.5px] text-state-normal" x-show="saved" x-cloak>Tersimpan</span>
                     <span class="text-[11.5px] text-state-bahaya" x-show="failed" x-cloak>Gagal menyimpan — coba lagi</span>
-                    <button type="button" class="glass glass--chip glass-button px-4 py-2 text-[12px] font-semibold"
-                            :disabled="saving" @click="save()">
-                        <x-icon name="save" class="size-4"/>
-                        <span x-text="saving ? 'Menyimpan…' : 'Simpan'"></span>
-                    </button>
+                    @can('thresholds.edit')
+                        <button type="button" class="glass glass--chip glass-button px-4 py-2 text-[12px] font-semibold"
+                                :disabled="saving" @click="save()">
+                            <x-icon name="save" class="size-4"/>
+                            <span x-text="saving ? 'Menyimpan…' : 'Simpan'"></span>
+                        </button>
+                    @else
+                        <span class="text-[11.5px] text-mist-400">Peran Anda hanya dapat melihat ambang batas.</span>
+                    @endcan
                 </div>
             </div>
 
-            <div class="scroll-y max-h-[46vh]">
+            <div class="scroll-y max-h-[46vh] max-sm:hidden">
                 <table class="w-full min-w-[640px] border-collapse text-left">
                     <thead class="sticky top-0 bg-ink-900/80 backdrop-blur">
                         <tr class="text-[10.5px] tracking-wide text-mist-300 uppercase">
@@ -154,6 +158,7 @@
                                 </td>
                                 <td class="px-4 py-2">
                                     <input type="number" step="any" x-model.number="row.warning_threshold"
+                                           @disabled(! auth()->user()->can('thresholds.edit'))
                                            :aria-label="`Ambang Waspada — ${row.station}, ${row.label}`"
                                            :class="dirty.has(row.id) && 'ring-1 ring-brand-400/60'"
                                            @input="dirty.add(row.id)"
@@ -161,6 +166,7 @@
                                 </td>
                                 <td class="px-4 py-2">
                                     <input type="number" step="any" x-model.number="row.alert_threshold"
+                                           @disabled(! auth()->user()->can('thresholds.edit'))
                                            :aria-label="`Ambang Siaga — ${row.station}, ${row.label}`"
                                            :class="dirty.has(row.id) && 'ring-1 ring-brand-400/60'"
                                            @input="dirty.add(row.id)"
@@ -168,6 +174,7 @@
                                 </td>
                                 <td class="px-4 py-2">
                                     <input type="number" step="any" x-model.number="row.critical_threshold"
+                                           @disabled(! auth()->user()->can('thresholds.edit'))
                                            :aria-label="`Ambang Bahaya — ${row.station}, ${row.label}`"
                                            :class="dirty.has(row.id) && 'ring-1 ring-brand-400/60'"
                                            @input="dirty.add(row.id)"
@@ -178,10 +185,52 @@
                     </tbody>
                 </table>
             </div>
+
+            {{-- On a phone a row of three number columns is unusable sideways,
+                 so each parameter becomes a card with its three limits. --}}
+            <div class="scroll-y max-h-[60vh] space-y-2.5 px-3 py-3 sm:hidden">
+                <template x-for="row in rows" :key="'m' + row.id">
+                    <div class="glass glass--inset p-3">
+                        <p class="text-[12.5px] font-semibold text-white">
+                            <span x-text="row.label"></span>
+                            <span class="text-mist-400" x-text="row.unit ? ` (${row.unit})` : ''"></span>
+                        </p>
+                        <p class="text-[11px] text-mist-400" x-text="row.station"></p>
+
+                        <div class="mt-2.5 grid grid-cols-3 gap-2">
+                            <label class="block">
+                                <span class="mb-1 block text-[10.5px] font-medium text-state-waspada">Waspada</span>
+                                <input type="number" step="any" x-model.number="row.warning_threshold"
+                                       @disabled(! auth()->user()->can('thresholds.edit'))
+                                       :aria-label="`Ambang Waspada — ${row.station}, ${row.label}`"
+                                       :class="dirty.has(row.id) && 'ring-1 ring-brand-400/60'"
+                                       @input="dirty.add(row.id)"
+                                       class="tnum glass glass--inset min-h-10 w-full px-2 text-[12px] text-state-waspada">
+                            </label>
+
+                            <label class="block">
+                                <span class="mb-1 block text-[10.5px] font-medium text-state-siaga">Siaga</span>
+                                <input type="number" step="any" x-model.number="row.alert_threshold"
+                                       @disabled(! auth()->user()->can('thresholds.edit'))
+                                       :aria-label="`Ambang Siaga — ${row.station}, ${row.label}`"
+                                       :class="dirty.has(row.id) && 'ring-1 ring-brand-400/60'"
+                                       @input="dirty.add(row.id)"
+                                       class="tnum glass glass--inset min-h-10 w-full px-2 text-[12px] text-state-siaga">
+                            </label>
+
+                            <label class="block">
+                                <span class="mb-1 block text-[10.5px] font-medium text-state-bahaya">Bahaya</span>
+                                <input type="number" step="any" x-model.number="row.critical_threshold"
+                                       @disabled(! auth()->user()->can('thresholds.edit'))
+                                       :aria-label="`Ambang Bahaya — ${row.station}, ${row.label}`"
+                                       :class="dirty.has(row.id) && 'ring-1 ring-brand-400/60'"
+                                       @input="dirty.add(row.id)"
+                                       class="tnum glass glass--inset min-h-10 w-full px-2 text-[12px] text-state-bahaya">
+                            </label>
+                        </div>
+                    </div>
+                </template>
+            </div>
         </div>
     </x-page-shell>
-@endsection
-
-@section('panel')
-    <div></div>
 @endsection

@@ -31,6 +31,15 @@ class AuthController extends Controller
             ]);
         }
 
+        // A disabled account keeps its history but is not let back in.
+        if (! Auth::user()->is_active) {
+            Auth::logout();
+
+            throw ValidationException::withMessages([
+                'email' => 'Akun ini dinonaktifkan. Hubungi administrator.',
+            ]);
+        }
+
         $request->session()->regenerate();
 
         return redirect()->intended(route('twin'));

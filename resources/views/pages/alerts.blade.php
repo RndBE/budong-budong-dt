@@ -20,8 +20,7 @@
             </div>
         </x-slot:actions>
 
-        <div class="glass glass--panel overflow-hidden" x-sheen
-             x-data="{
+        <div x-data="{
                  async act(id, action) {
                      await fetch(`/api/alerts/${id}/${action}`, {
                          method: 'POST',
@@ -30,6 +29,7 @@
                      window.location.reload();
                  }
              }">
+        <div class="glass glass--panel overflow-hidden max-sm:hidden" x-sheen>
             <div class="table-scroll">
             <table class="w-full border-collapse text-left">
                 <thead>
@@ -86,7 +86,7 @@
                                 @endif
                             </td>
                             <td class="px-4 py-3 text-right whitespace-nowrap">
-                                @unless ($alert->resolved_at)
+                                @if (! $alert->resolved_at && auth()->user()->can('alerts.handle'))
                                     <div class="flex items-center justify-end gap-1.5">
                                         @unless ($alert->acknowledged_at)
                                             <button type="button" class="glass glass--chip glass-button px-3 py-1.5 text-[11px] font-semibold"
@@ -99,12 +99,12 @@
                                             Selesaikan
                                         </button>
                                     </div>
-                                @endunless
+                                @endif
                             </td>
                         </tr>
                     @empty
                         <tr>
-                            <td colspan="6" class="px-4 py-10 text-center">
+                            <td colspan="7" class="px-4 py-10 text-center">
                                 <p class="text-[13px] font-semibold text-white">Tidak ada peringatan</p>
                                 <p class="mt-1 text-[11.5px] text-mist-300">
                                     Seluruh parameter berada di bawah ambang batas untuk filter ini.
@@ -117,12 +117,79 @@
             </div>
         </div>
 
+        {{-- Below sm the same alerts are cards: a seven-column table on a phone
+             is a horizontal scroll bar with the actions hidden inside it. --}}
+        <ul class="space-y-2.5 sm:hidden">
+            @forelse ($alerts as $alert)
+                @php($color = config("dam.statuses.{$alert->level}.color", '#fbbf24'))
+                <li class="glass glass--panel p-3.5" x-sheen>
+                    <div class="flex items-start justify-between gap-2">
+                        <div class="min-w-0">
+                            <p class="text-[13px] font-semibold text-white">{{ $alert->title }}</p>
+                            <p class="tnum text-[11px] text-mist-400">
+                                {{ $alert->triggered_at->translatedFormat('d M Y') }} · {{ $alert->triggered_at->format('H:i') }}
+                            </p>
+                        </div>
+                        <span class="inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold capitalize"
+                              style="background: {{ $color }}1f; color: {{ $color }}">
+                            <span class="status-dot" style="background: {{ $color }}"></span>
+                            {{ $alert->level }}
+                        </span>
+                    </div>
+
+                    <p class="mt-2 text-[11.5px] leading-relaxed text-mist-300">{{ $alert->message }}</p>
+
+                    <p class="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-mist-400">
+                        @if ($alert->station)
+                            <a href="{{ route('twin.station', $alert->station->code) }}" class="text-mist-200 hover:text-white">
+                                {{ $alert->station->name }}
+                            </a>
+                            <span>·</span>
+                        @endif
+                        <span class="tnum">
+                            {{ $alert->value !== null ? number_format((float) $alert->value, 2, ',', '.') : '—' }}
+                            / {{ $alert->threshold !== null ? number_format((float) $alert->threshold, 2, ',', '.') : '—' }}
+                        </span>
+                        <span>·</span>
+                        @if ($alert->resolved_at)
+                            <span class="text-state-normal">Selesai</span>
+                        @elseif ($alert->acknowledged_at)
+                            <span class="text-brand-300">Ditinjau</span>
+                        @else
+                            <span class="text-state-waspada">Aktif</span>
+                        @endif
+                    </p>
+
+                    @if (! $alert->resolved_at && auth()->user()->can('alerts.handle'))
+                        <div class="mt-2.5 flex items-center gap-2">
+                            @unless ($alert->acknowledged_at)
+                                <button type="button"
+                                        class="min-h-10 flex-1 rounded-xl bg-white/8 px-3 text-[12px] font-medium text-mist-100 transition hover:bg-white/16"
+                                        @click="act({{ $alert->id }}, 'acknowledge')">
+                                    Tinjau
+                                </button>
+                            @endunless
+                            <button type="button"
+                                    class="min-h-10 flex-1 rounded-xl bg-brand-500/22 px-3 text-[12px] font-semibold text-brand-100 transition hover:bg-brand-500/32"
+                                    @click="act({{ $alert->id }}, 'resolve')">
+                                Selesaikan
+                            </button>
+                        </div>
+                    @endif
+                </li>
+            @empty
+                <li class="glass glass--panel px-4 py-10 text-center" x-sheen>
+                    <p class="text-[13px] font-semibold text-white">Tidak ada peringatan</p>
+                    <p class="mt-1 text-[11.5px] text-mist-300">
+                        Seluruh parameter berada di bawah ambang batas untuk filter ini.
+                    </p>
+                </li>
+            @endforelse
+        </ul>
+        </div>
+
         <div class="mt-3.5 pb-2 [&_a]:text-mist-200 [&_span]:text-mist-400">
             {{ $alerts->links() }}
         </div>
     </x-page-shell>
-@endsection
-
-@section('panel')
-    <div></div>
 @endsection

@@ -44,10 +44,15 @@ export default function twinSphere() {
         /** True only while the camera turns; the pins stay up that long. */
         pointing: false,
 
+        /** Set while the pins fade out ahead of a panorama swap. */
+        departing: false,
+
         /** Which time-of-day texture the base sphere currently wears. */
         phase: null,
         rotating: true,
-        zoom: 1,
+
+        /** The viewer's own 0-100 zoom, as a fraction — the readout on stage. */
+        zoom: 0,
 
         /** Where the camera looks, in degrees — drives the glass compass. */
         heading: 0,
@@ -167,6 +172,79 @@ export default function twinSphere() {
             return `${Math.round(this.bearing)}° ${points[Math.round(this.bearing / 45) % 8]}`;
         },
 
+        /**
+         * Which way a panorama opens, in degrees of yaw.
+         *
+         * The base panorama opens on a compass bearing
+         * (`dam.stage.default_bearing`) rather than a raw yaw, so the framing
+         * stays put when `north_offset` is corrected: yaw is measured from the
+         * picture, the bearing from north. A station opens on its own yaw.
+         */
+        openingYaw(panorama, isBase) {
+            const bearing = this.$store.site.environment?.stage?.default_bearing;
+
+            if (isBase && bearing !== null && bearing !== undefined) {
+                return bearing - (panorama?.north_offset ?? 0);
+            }
+
+            return panorama?.yaw ?? 0;
+        },
+
+        /**
+         * The framing the stage rests at, from `dam.stage.default_zoom`.
+         *
+         * Written-out levels used to assume a resting zoom of 45; with the
+         * stage opening at its widest they would have been a lean *in* where
+         * the choreography calls for standing still.
+         */
+        restingZoom() {
+            return this.$store.site.environment?.stage?.default_zoom ?? 45;
+        },
+
+        /** A step closer than the resting framing, clamped to the viewer's range. */
+        closerZoom(step) {
+            return Math.min(100, this.restingZoom() + step);
+        },
+
+        /**
+         * Point the idle drift at a sweep instead of a full turn.
+         *
+         * Two keypoints either side of the panorama's own framing: the plugin
+         * walks to one, then back to the other along the short arc, so the
+         * camera never travels far enough to reach the seam where the render
+         * was joined. The pitch is the framing's own, which keeps the drift
+         * level — it goes right and left, never up and down.
+         */
+        driftAround(yaw, pitch) {
+            if (!psv.autorotate) {
+                return;
+            }
+
+            const arc = (this.$store.site.environment?.stage?.drift_arc ?? 55) * DEG;
+
+            // Right first, then back to the left: the order is the itinerary.
+            psv.autorotate.setKeypoints([
+                { position: { yaw: yaw + arc, pitch } },
+                { position: { yaw: yaw - arc, pitch } },
+            ]);
+        },
+
+        /** Re-centre the sweep on whatever the camera is framing now. */
+        recentreDrift() {
+            if (!psv.viewer) {
+                return;
+            }
+
+            const { yaw, pitch } = psv.viewer.getPosition();
+
+            this.driftAround(yaw, pitch);
+        },
+
+        /** The viewer's own zoom level, not the mirrored state (for debugging). */
+        get zoomLevel() {
+            return psv.viewer?.getZoomLevel?.() ?? null;
+        },
+
         /** Which texture the sphere is actually wearing (handy when debugging). */
         get textureUrl() {
             const panorama = psv.viewer?.config?.panorama;
@@ -257,7 +335,7 @@ export default function twinSphere() {
                 panorama: opening.preview ?? opening.url,
                 caption: base.name,
                 navbar: false,
-                defaultYaw: (base.panorama.yaw ?? 0) * DEG,
+                defaultYaw: this.openingYaw(base.panorama, true) * DEG,
                 defaultPitch: (base.panorama.pitch || this.$store.site.environment?.stage?.default_pitch || 0) * DEG,
                 defaultZoomLvl: this.$store.site.environment?.stage?.default_zoom ?? 45,
                 minFov: 24,
@@ -272,7 +350,18 @@ export default function twinSphere() {
                     [MarkersPlugin, { markers: [] }],
                     // The stage is never quite still: it drifts slowly until
                     // touched, and picks the drift back up a few seconds later.
-                    [AutorotatePlugin, { autostartDelay: 4000, autostartOnIdle: true, autorotateSpeed: '0.11rpm' }],
+                    /*
+                    | `startFromClosest: false` is what makes the sweep set off
+                    | to the right: the plugin walks the keypoints in the order
+                    | they are given instead of picking the nearest one, and
+                    | the right-hand point is first.
+                    */
+                    [AutorotatePlugin, {
+                        autostartDelay: 4000,
+                        autostartOnIdle: true,
+                        autorotateSpeed: '0.11rpm',
+                        startFromClosest: false,
+                    }],
                 ],
             });
 
@@ -282,6 +371,21 @@ export default function twinSphere() {
             psv.viewer.addEventListener('ready', () => {
                 this.ready = true;
                 this.loading = false;
+
+                this.recentreDrift();
+
+                /*
+                | Seed the mirrored camera state from the viewer itself.
+                | `position-updated` and `zoom-updated` only fire on a change,
+                | so the opening framing would otherwise never reach the
+                | compass or the zoom readout — the dial read north while the
+                | camera was already looking north-east.
+                */
+                const opening = psv.viewer.getPosition();
+
+                this.dialAngle += (opening.yaw / DEG) - this.heading;
+                this.heading = opening.yaw / DEG;
+                this.zoom = psv.viewer.getZoomLevel() / 100;
 
                 // A panorama asked for while the viewer was still being built
                 // (deep link, or a very quick click) gets its turn now.
@@ -299,7 +403,11 @@ export default function twinSphere() {
             });
 
             psv.viewer.addEventListener('zoom-updated', ({ zoomLevel }) => {
-                this.zoom = zoomLevel / 45;
+                // The readout is the viewer's own scale: 0 at the widest
+                // framing the stage opens on, 100 fully zoomed in. It used to
+                // be divided by the old resting level, so the stage claimed
+                // 100% before anyone had touched the stepper.
+                this.zoom = zoomLevel / 100;
             });
 
             psv.viewer.addEventListener('position-updated', ({ position }) => {
@@ -359,13 +467,22 @@ export default function twinSphere() {
             // own) means `setPanorama` reuses it instead of fetching twice.
             const warm = psv.viewer.textureLoader.preloadPanorama(preview);
 
+            // The sharp one follows straight behind it. Without this the HD only
+            // starts downloading after the fade, so the sphere sits blurred for
+            // as long as the file takes.
+            if (asset.url !== preview) {
+                psv.viewer.textureLoader.preloadPanorama(asset.url).catch(() => {});
+            }
+
             // Hand over while the camera is still moving: the cross-fade picks
             // the motion up from there, so there is no pause between the two.
             await Promise.all([settle(warm), Promise.race([settle(psv.flight), wait(560)])]);
             psv.flight = null;
 
-            // The approach is over: take the pins down before the picture
-            // changes, so the cross-fade lands on a clean frame.
+            // The approach is over. Let the pins fade with the picture rather
+            // than blink out of existence a frame before it.
+            this.departing = true;
+            await wait(220);
             this.pointing = false;
             this.flyingTo = null;
             this.syncPins();
@@ -374,27 +491,37 @@ export default function twinSphere() {
                 return;
             }
 
-            try {
-                await psv.viewer.setPanorama(preview, {
+            // No rotation in the transition: the camera has just been turned to
+            // the pin, and asking it to swing to the new panorama's default yaw
+            // mid-fade is the jump that reads as a blink. Only the lean-in eases
+            // back out.
+            const resting = this.restingZoom();
+
+            // Arriving is a step *into* the place: the picture cross-fades at
+            // the framing the approach ended on, then the new scene opens up
+            // towards the camera. Nothing ever pulls back on the way in — that
+            // reversal is what made the move feel like walking out.
+            const swap = psv.viewer
+                .setPanorama(preview, {
                     caption: target.name,
                     showLoader: false,
-                    // The camera keeps travelling through the fade: it turns to
-                    // the new framing and eases back out of the lean-in, all on
-                    // one curve, so arriving is a single movement.
-                    transition: { effect: 'fade', rotation: true, speed: 1100 },
-                    position: {
-                        yaw: (target.panorama.yaw ?? 0) * DEG,
-                        pitch: (target.panorama.pitch
-                            || (target.code === this.base?.code ? this.$store.site.environment?.stage?.default_pitch : 0)
-                            || 0) * DEG,
-                    },
-                    zoom: this.$store.site.environment?.stage?.default_zoom ?? 45,
-                });
-            } catch {
-                // Interrupted by another panorama; that one owns the stage now.
-            }
+                    transition: { effect: 'fade', rotation: false, speed: 1000 },
+                    // Both ends of the trip land on the resting framing. The
+                    // stage opens at its widest (`dam.stage.default_zoom`), so
+                    // there is nothing to lean into and nothing to give back —
+                    // the arrival is the turn plus the cross-fade, and the
+                    // stepper is what gets closer afterwards.
+                    zoom: resting,
+                })
+                .catch(() => {});
+
+            // The chrome must not hang on that promise: a throttled tab (or an
+            // interrupted fade) can leave it pending long after the picture has
+            // already changed, and the station banner would never appear.
+            await Promise.race([swap, wait(1100)]);
 
             this.flying = false;
+            this.departing = false;
 
             if (psv.showing?.code !== target.code) {
                 return;
@@ -403,13 +530,17 @@ export default function twinSphere() {
             this.loading = false;
             this.syncPins();
 
-            // Decoding the full sphere stalls a frame or two; keep that away
-            // from the tail of the movement.
+            // The sweep belongs to the picture on screen, not the one before it.
+            this.recentreDrift();
+
+            // Decoding the full sphere stalls a frame or two, so it waits for
+            // the tail of the movement — but it does not wait for the fade's
+            // promise, which can stall and leave the picture soft for ever.
             window.setTimeout(() => {
                 if (psv.showing?.code === target.code) {
                     this.loadHd(target);
                 }
-            }, 500);
+            }, 300);
         },
 
         /**
@@ -434,7 +565,8 @@ export default function twinSphere() {
             psv.flight = settle(psv.viewer.animate({
                 yaw: sphere.yaw * DEG,
                 pitch: sphere.pitch * DEG,
-                zoom: 58,
+                // The approach only turns: the push happens inside the fade.
+                zoom: this.restingZoom(),
                 duration: 780,
             }));
         },
@@ -455,7 +587,17 @@ export default function twinSphere() {
             const code = target.code;
 
             psv.viewer
-                .setPanorama(url, { showLoader: false, transition: false, caption: target.name })
+                .setPanorama(url, {
+                    showLoader: false,
+                    // A short fade rather than a hard swap: the picture is the
+                    // same, so this reads as it coming into focus.
+                    transition: { effect: 'fade', rotation: false, speed: 450 },
+                    caption: target.name,
+                    // Carry the framing over. Without it the swap falls back to
+                    // the viewer's default zoom and yanks the camera back out
+                    // of the step it just took into the station.
+                    zoom: psv.viewer.getZoomLevel(),
+                })
                 .then(() => {
                     // A different panorama may have been opened meanwhile.
                     if (psv.showing?.code === code) {
@@ -708,7 +850,7 @@ export default function twinSphere() {
             psv.flight = settle(psv.viewer.animate({
                 yaw: (sphere?.yaw ?? 0) * DEG,
                 pitch: (sphere?.pitch ?? 0) * DEG,
-                zoom: 58,
+                zoom: this.closerZoom(18),
                 speed: '6rpm',
             }));
         },
@@ -787,11 +929,12 @@ export default function twinSphere() {
             const panorama = psv.showing?.panorama;
 
             const stage = this.$store.site.environment?.stage;
+            const isBase = psv.showing?.code === this.base?.code;
 
             settle(psv.viewer?.animate({
-                yaw: (panorama?.yaw ?? 0) * DEG,
-                pitch: (panorama?.pitch || (psv.showing?.code === this.base?.code ? stage?.default_pitch : 0) || 0) * DEG,
-                zoom: stage?.default_zoom ?? 45,
+                yaw: this.openingYaw(panorama, isBase) * DEG,
+                pitch: (panorama?.pitch || (isBase ? stage?.default_pitch : 0) || 0) * DEG,
+                zoom: this.restingZoom(),
                 speed: '4rpm',
             }));
         },

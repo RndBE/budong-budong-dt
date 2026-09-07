@@ -19,16 +19,18 @@
 </svg>
 
 @php($scene = $environment['scene'])
+@php($phases = $environment['stage']['base']['phases'] ?? [])
+@php($backdrop = collect($phases)->map(fn ($asset) => $asset['preview'])->all() ?: $scene['assets'])
 
 <div class="relative grid h-screen w-screen place-items-center overflow-hidden">
 
     {{-- Same time-of-day render as the dashboard --}}
     <div class="absolute inset-0">
-        <div class="stage-layer scale-105"
-             style="background-image: url('{{ $scene['assets'][$scene['primary']] }}');
+        <div class="backdrop-pan"
+             style="background-image: url('{{ $backdrop[$scene['primary']] }}');
                     filter: brightness({{ $scene['grade']['brightness'] }}) contrast({{ $scene['grade']['contrast'] }}) saturate({{ $scene['grade']['saturate'] }});"></div>
-        <div class="stage-layer scale-105"
-             style="background-image: url('{{ $scene['assets'][$scene['secondary']] }}');
+        <div class="backdrop-pan"
+             style="background-image: url('{{ $backdrop[$scene['secondary']] }}');
                     opacity: {{ $scene['mix'] }};"></div>
         <div class="absolute inset-0"
              style="background: linear-gradient(180deg, rgba(3,11,20,.72), rgba(3,11,20,.55) 45%, rgba(3,11,20,.88))"></div>

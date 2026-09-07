@@ -8,6 +8,7 @@ use App\Models\User;
 use App\Services\Telemetry\ReadingSimulator;
 use Carbon\CarbonImmutable;
 use Database\Seeders\DamSeeder;
+use Database\Seeders\RoleSeeder;
 use Database\Seeders\StationSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
@@ -20,7 +21,8 @@ class MonitoringApiTest extends TestCase
     {
         parent::setUp();
 
-        $this->seed([DamSeeder::class, StationSeeder::class]);
+        // Roles carry the abilities the write endpoints ask for.
+        $this->seed([RoleSeeder::class, DamSeeder::class, StationSeeder::class]);
 
         // A short slice of readings is enough to exercise the payloads.
         $simulator = app(ReadingSimulator::class);

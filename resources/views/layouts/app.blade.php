@@ -6,6 +6,30 @@
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>@yield('title', 'Digital Twin') · Bendungan Budong Budong</title>
     <link rel="icon" href="{{ asset('assets/icon/favicon.svg') }}" type="image/svg+xml">
+
+    {{-- Build the next page while the pointer is still on its way to the link.
+         Prerender, not prefetch: these pages answer `Cache-Control: no-cache`,
+         which a prefetched copy may not be reused for, so it would be fetched
+         all over again on the click. The digital twin is left out — it would
+         mean a second WebGL sphere built for a page nobody has opened yet.
+         Chromium reads this; every other browser ignores it. --}}
+    <script type="speculationrules">
+        {
+            "prerender": [{
+                "where": {
+                    "and": [
+                        { "href_matches": "/*" },
+                        { "not": { "href_matches": "/digital-twin*" } },
+                        { "not": { "href_matches": "/peta*" } },
+                        { "not": { "href_matches": "/logout" } },
+                        { "not": { "selector_matches": "[data-no-prefetch]" } }
+                    ]
+                },
+                "eagerness": "moderate"
+            }]
+        }
+    </script>
+
     @vite(['resources/css/app.css', 'resources/js/app.js'])
 </head>
 <body class="h-full antialiased">
@@ -22,9 +46,15 @@
     </filter>
 </svg>
 
+@php($panelFoldable = request()->routeIs('twin', 'twin.station'))
+
+{{-- An empty panel is still a full-height, click-catching column parked over
+     the right of the page, so a page that declares no panel gets none. --}}
+@php($hasPanel = \Illuminate\Support\Facades\View::hasSection('panel'))
+
 {{-- `w-full`, never `w-screen`: 100vw includes the scrollbar, which pushes
      every right-anchored panel that many pixels off the screen. --}}
-<div class="app-frame relative w-full overflow-hidden"
+<div class="app-frame relative w-full overflow-hidden {{ $hasPanel ? '' : 'app-frame--no-panel' }}"
      :class="{
          'app-frame--rail-compact': compact,
          'app-frame--panel-collapsed': panelCollapsed,
@@ -32,7 +62,7 @@
      x-data="{
          panelOpen: false,
          compact: JSON.parse(localStorage.getItem('rail-compact') ?? 'false'),
-         panelCollapsed: JSON.parse(localStorage.getItem('panel-collapsed') ?? 'false'),
+         panelCollapsed: {{ $panelFoldable ? "JSON.parse(localStorage.getItem('panel-collapsed') ?? 'false')" : 'false' }},
          togglePanel() {
              this.panelCollapsed = !this.panelCollapsed;
              localStorage.setItem('panel-collapsed', this.panelCollapsed);
@@ -44,7 +74,7 @@
              $nextTick(() => window.dispatchEvent(new Event('resize')));
          },
      }"
-     x-init="$store.site.start(@js($boot), @js($dashboard ?? null))"
+     x-init="$store.site.start(@js($boot), @js($dashboard ?? null), @js($hasPanel))"
      @keydown.escape.window="panelOpen = false">
 
     {{-- Stage: time-of-day map render, 3D twin, or the 360 panorama. --}}
@@ -79,6 +109,7 @@
 
     {{-- Summary / station panel. Below the xl breakpoint it slides over the
          stage instead of taking a column of its own. --}}
+    @if ($hasPanel)
     <section class="chrome-scale pointer-events-auto absolute z-30 max-xl:z-40"
              data-chrome="panel"
              style="right: var(--gap); top: var(--header-h); bottom: var(--gap); width: var(--panel-w-open);
@@ -105,8 +136,11 @@
         <x-icon name="chart-bar" class="size-[18px]" x-show="!panelOpen"/>
         <x-icon name="x" class="size-[18px]" x-show="panelOpen" x-cloak/>
     </button>
+    @endif
 
-    {{-- Desktop handle for folding the summary panel away. --}}
+    {{-- Desktop handle for folding the summary panel away. Only the digital
+         twin has a stage that gains anything from the extra width. --}}
+    @if ($panelFoldable)
     <button type="button"
             class="chrome-scale chrome-slide glass glass--chip glass-button pointer-events-auto absolute z-40 hidden h-16 w-7 -translate-y-1/2 xl:grid"
             style="right: calc(var(--panel-w) + var(--gap) * 1.7); top: 50%"
@@ -117,9 +151,13 @@
         <x-icon name="chevrons-right" class="size-4 transition"
                 ::class="panelCollapsed ? 'rotate-180' : ''"/>
     </button>
+    @endif
 
     @yield('stage-controls')
 </div>
+
+{{-- A click that waits on the server has to show it landed. --}}
+<div class="nav-progress" data-nav-progress aria-hidden="true"></div>
 
 </body>
 </html>

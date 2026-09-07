@@ -34,7 +34,9 @@ return [
 
     'stage' => [
         'base_station' => 'base-dam',
-        'default_zoom' => 45,
+        // The stage opens at its widest framing; the stepper zooms in from
+        // there. Every other zoom in the choreography is relative to this one.
+        'default_zoom' => 0,
 
         /*
         | Where north sits in the panorama, in degrees. The renders are not
@@ -43,6 +45,22 @@ return [
         */
         'north_offset' => 0.0,
         'default_pitch' => -12,  // most pins hang below the horizon
+
+        /*
+        | Compass bearing the base panorama opens on, in degrees from north:
+        | 36 is north-east, looking across the dam. It is a bearing, not a raw
+        | yaw, so it stays right when `north_offset` changes.
+        */
+        'default_bearing' => 36.0,
+
+        /*
+        | How far the idle drift sweeps to each side of a panorama's own
+        | framing, in degrees. It sweeps back and forth rather than going the
+        | whole way round: a full turn eventually reaches the seam where the
+        | render was joined, and that is the one part of the picture nobody
+        | should be shown.
+        */
+        'drift_arc' => 55.0,
 
         'sphere' => [
             'yaw_offset' => 0.0,    // rotate every derived bearing, degrees

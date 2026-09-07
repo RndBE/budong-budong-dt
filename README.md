@@ -16,7 +16,7 @@ panorama dengan Photo Sphere Viewer, dan grafik dengan ECharts.
 | **3D Digital Twin** (`/digital-twin`) | Panggung utama: panorama 360° tubuh bendungan (`Panoramic_Base Dam`) yang bisa diputar/di-zoom, 15 penanda stasiun berwarna status di dalam bola panorama, pencarian lokasi, dan panel ringkasan di kanan. Klik penanda → panorama stasiun itu. |
 | **Viewer 360°** (`/digital-twin/{kode}`) | Panorama drone per stasiun, hotspot yang menampilkan bacaan sensor, tautan antar panorama, dan panel kanan berisi detail stasiun (grafik, ambang batas, riwayat peringatan & perawatan). Bar kiri tetap sama. |
 | **Dashboard** (`/dashboard`) | KPI utama, tren muka air/debit, status seluruh stasiun, peringatan, dan perawatan mendatang. |
-| **Data Sensor** (`/sensor`) | Tabel 16 stasiun + filter tipe, pintasan ke 360° dan grafik. |
+| **Data Instrumentasi** (`/sensor`) | Tabel 16 stasiun + filter tipe, pintasan ke 360° dan grafik. |
 | **Analisa & Grafik** (`/analisa`) | Grafik per parameter dengan garis ambang batas, rentang 24 jam / 7 hari / 30 hari, dan statistik ringkas. |
 | **Perawatan** (`/perawatan`) | Papan kanban preventif/korektif/kalibrasi; status bisa dipindah langsung. |
 | **Peringatan** (`/peringatan`) | Riwayat pelampauan ambang; bisa ditinjau dan diselesaikan. |
@@ -28,7 +28,7 @@ panorama dengan Photo Sphere Viewer, dan grafik dengan ECharts.
 `App\Support\SolarClock` menghitung posisi matahari (algoritma NOAA) untuk
 koordinat bendungan (−1,9536, 119,3411 — Asia/Makassar). Hasilnya dipakai untuk:
 
-- memilih dua dari empat still (`malam`, `fajar`, `siang`, `senja`) lalu
+- memilih dua dari empat panorama (`malam`, `fajar`, `siang`, `senja`) lalu
   **crossfade** sesuai ketinggian matahari, bukan sekadar berganti gambar;
 - *color grading* halus (kecerahan, kontras, saturasi, kehangatan cahaya).
 
@@ -38,6 +38,12 @@ halaman Pengaturan (tersimpan di tabel `settings`).
 ### Kontrol waktu panggung
 
 Gradasi ini dipakai panorama panggung dan latar seluruh halaman lain.
+
+Latar halaman (dan halaman masuk) memakai panorama 360 bendungan yang sama
+dengan panggung — tier `preview` 2048px, ±100–210 KB per fase — dan **bergeser
+pelan** ke samping, satu putaran penuh 240 detik. Karena gambar 360 menyambung
+di ujungnya, perulangan tidak terlihat. Gerakan berhenti di layar kecil
+(< 640px) dan saat sistem meminta `prefers-reduced-motion`.
 
 Chip jam di kanan atas panggung digital twin bisa dibuka menjadi panel kontrol
 ringkas: **pilihan Otomatis/Kustom**, **slider waktu**, dan **pilihan kecepatan**.
@@ -65,7 +71,10 @@ kecepatan. Jam pada header ikut menampilkan waktu simulasi dengan penanda
 
 ### Label penanda
 
-Memilih hasil **Cari Lokasi** memutar kamera ke penanda itu **dan menampilkan
+Kolom **Cari lokasi** ada di header, tepat di samping jam (di ponsel jadi tombol
+ikon), dan **hanya muncul di halaman Digital Twin** — kolom itu mengarahkan
+kamera panggung, jadi tempatnya di halaman yang punya panggung. Tekan `/` untuk
+melompat ke sana. Memilih hasil memutar kamera ke penanda itu **dan menampilkan
 namanya** — sekalipun label sedang dimatikan — plus denyut singkat supaya jelas
 yang mana. Namanya bertahan sampai panggung disentuh lagi atau stasiun lain
 dibuka.
@@ -89,7 +98,7 @@ Panorama dasar punya empat tekstur, dibangun dari render di
 | Malam | `Panoramic_Base_Dam_Malam.png` | `base-dam-night.webp` |
 
 Keempatnya 1774×887 seperti panorama lain, jadi masing-masing dinaikkan dengan
-Real-ESRGAN x4 (jahitan 360° dibungkus dulu), diturunkan ke 6144×3072, lalu
+Real-ESRGAN x4 (jahitan 360° dibungkus dulu), diturunkan ke 4096×2048, lalu
 ditulis tiga tingkat (HD, preview, thumb). Hasil upscale disimpan sebagai master
 HD, jadi menjalankan ulang skripnya tidak memakai GPU lagi kecuali diberi
 `--force`.
@@ -105,6 +114,115 @@ panggung bisa berpadu-silang di antaranya tanpa gambar melompat:
 - gradasi matahari tetap jalan di atasnya tapi hanya **setengah kekuatan** —
   tiap tekstur sudah punya cahayanya sendiri, dan menit-menit di antara dua
   tekstur diisi oleh gradasi itu.
+
+### Perawatan: permintaan, percakapan, riwayat
+
+Menu **Perawatan** punya tiga bagian:
+
+- **Tiket & Pesan** — daftar pekerjaan beserta percakapannya. Operator ruang
+  kendali menulis di satu sisi, layanan teknis membalas di sisi lain; sisinya
+  diambil dari peran akun (`roles.desk_side`), jadi tidak bisa mengaku-aku.
+  Pesan yang belum dibuka memunculkan angka merah di menu Perawatan dan di
+  tiketnya — dihitung dari sisi pembacanya sendiri.
+- **Papan Tugas** — papan kanban jadwal perawatan (terjadwal, berjalan,
+  tertunda, selesai) seperti sebelumnya.
+- **Riwayat** — catatan pekerjaan yang sudah selesai per alat: tanggal selesai,
+  alat, jenis pekerjaan, pelaksana, dan catatannya. Bisa disaring per stasiun.
+
+Percakapannya dibaca seperti ruang obrolan: daftar tiket di kiri menampilkan
+**kutipan pesan terakhir** beserta jamnya, dan utasnya di kanan memberi
+**judul tanggal** saat harinya berganti, menyatukan pesan berurutan dari orang
+yang sama (satu avatar dan nama per rentetan, jamnya di bawah baris terakhir),
+serta menandai **batas "Belum dibaca"**. Kedua kolom punya tingginya sendiri dan
+menggulir di dalamnya, jadi kolom tulis pesan tidak pernah lari ke bawah layar.
+
+Tombol **Ajukan perawatan** membuka **dialog** — bukan panel yang mendorong meja
+kerja ke bawah — dan membuat pekerjaan baru sekaligus membuka percakapannya
+(`POST /api/maintenance/requests`). Endpoint lainnya:
+`GET /api/maintenance/tickets`, `GET /api/maintenance/history`,
+`POST /api/maintenance/{id}/messages`, dan `POST /api/maintenance/{id}/read`.
+
+### Pengguna, peran, dan hak akses
+
+Menu **Pengguna & Akses** (hanya untuk peran yang memegang `users.manage`)
+berisi dua bagian:
+
+- **Pengguna** — menambah akun, mengubah nama/email/unit, memindahkan peran,
+  menyetel ulang kata sandi, dan menonaktifkan akun. Akun nonaktif tetap
+  menyimpan riwayatnya tetapi ditolak saat masuk.
+- **Peran & Hak Akses** — membuat peran, memilih sisi perawatannya (operator
+  ruang kendali atau layanan teknis), dan mencentang hak aksesnya.
+
+Tambah, ubah, dan hapus dikerjakan lewat **dialog**: satu dialog untuk akun,
+satu untuk peran, dan satu konfirmasi hapus (bukan kotak bawaan browser).
+Penyimpanannya tetap kiriman formulir biasa, jadi validasi dan CSRF tetap di
+sisi server; kalau ada yang belum benar, dialognya terbuka kembali berisi apa
+yang tadi diketik. Tombol Esc atau klik di luar menutup dialog.
+
+Katalog hak akses ada di `config/access.php`, bukan di database: peran hanya
+menyimpan kode yang dicentang, sehingga hak akses baru cukup ditambahkan satu
+baris di sana lalu dicek dengan `can()` / `@can`.
+
+| Kode | Artinya |
+|---|---|
+| `maintenance.view` | membuka menu Perawatan |
+| `maintenance.request` | mengajukan permintaan perawatan |
+| `maintenance.reply` | membalas pesan pada tiket |
+| `maintenance.status` | memindahkan kartu di papan tugas |
+| `stations.move` | menggeser penanda di peta dan panorama 360 |
+| `thresholds.edit` | mengubah ambang batas instrumentasi |
+| `alerts.handle` | meninjau dan menyelesaikan peringatan |
+| `reports.create` | membangkitkan laporan |
+| `users.manage` | mengelola pengguna |
+| `roles.manage` | mengelola peran dan hak aksesnya |
+
+Peran bawaan seeder: **Administrator** (seluruh hak akses, sisi layanan
+teknis), **Operator Ruang Kendali**, **Layanan Teknis**, dan **Pengawas**.
+Peran administrator selalu memegang seluruh katalog — itu peran yang membagikan
+akses, jadi tidak bisa dipersempit sampai tak seorang pun dapat melebarkannya
+kembali. Menu di rel kiri, tombol pada tiap halaman, dan endpoint API mengikuti
+katalog yang sama, jadi tidak ada tombol yang menjawab 403.
+
+### Gerak otomatis panggung
+
+Panggung bergeser sendiri saat tidak disentuh, tetapi **menyapu kiri-kanan**,
+bukan memutar penuh 360°. Sebuah putaran penuh pada akhirnya melewati garis
+sambungan render — satu-satunya bagian gambar yang tidak layak dilihat. Lebar
+sapuannya diatur `dam.stage.drift_arc` (bawaan 55° ke tiap sisi dari bingkai
+panorama itu sendiri), dan titik tengahnya disetel ulang setiap kali panorama
+berganti. Menggeser dengan tangan tetap bebas 360°.
+
+Sapuannya berangkat **ke kanan dulu**, lalu kembali ke kiri.
+
+Panggung terbuka menghadap **36° TL** (`dam.stage.default_bearing`) — sebuah
+arah kompas, bukan yaw mentah, jadi bingkainya tidak bergeser kalau
+`north_offset` dikoreksi. Bingkainya juga yang terlebar
+(`dam.stage.default_zoom` = 0), jadi penunjuk di kiri bawah membaca **0%** saat
+pertama muncul; tombol +/− mendekat dari sana.
+
+### Analisa & Grafik: dua tampilan
+
+Menu **Analisa & Grafik** punya dua tampilan dengan satu set kontrol
+(stasiun + rentang) di atasnya:
+
+- **Grafik** — tiap parameter jadi satu kartu chart, dua per baris, mengalir ke
+  bawah. Pilihan stasiun **"Semua stasiun — parameter utama"** menampilkan
+  parameter utama tiap stasiun beserta titik statusnya. Tiap kartu memuat nilai
+  terakhir, selisih sepanjang rentang, dan garis ambang batasnya. Mengklik
+  kartu membukanya di Analisa.
+- **Analisa** — parameter yang **dicentang digabung dalam satu grafik**.
+  Centang beberapa sekaligus (mis. ADR-01 + ADR-02, atau muka air hulu +
+  hilir) dan semuanya ditumpuk dengan legenda. Satuan kedua mendapat **sumbu
+  kanan** sendiri yang diberi nama satuannya; satuan ketiga tidak bisa ikut —
+  tiga skala dalam satu grafik tidak terbaca, jadi tombolnya dinonaktifkan
+  beserta alasannya. Statistik (terakhir/min/maks/rata-rata) mengikuti
+  parameter pertama yang dipilih dan menyebutkan namanya.
+
+Kartu digambar saat masuk ke layar, bukan semuanya sekaligus, dan pilihan
+stasiun/rentang/tampilan diingat di `localStorage`.
+
+Kalau chart tampak kosong dengan tulisan "Tidak ada bacaan pada rentang ini",
+data demonya sudah tertinggal — jalankan `php artisan telemetry:simulate`.
 
 ### Kompas panggung
 
@@ -136,7 +254,10 @@ ini harus diisi dari data lapangan sekali saja.
 ### Melipat panel
 
 Kolom kiri diringkas jadi deretan ikon lewat tombol chevron di bawah menu.
-Panel kanan punya pegangan sendiri di tepi kirinya (layar ≥ 1280 px): sekali
+Panel kanan punya pegangan sendiri di tepi kirinya — **hanya di halaman 3D
+Digital Twin** (layar ≥ 1280 px), karena hanya panggung itu yang mendapat
+manfaat dari ruang tambahan; di halaman lain panel itu isi utamanya, jadi selalu
+tampil: sekali
 klik panelnya terlipat ke kanan dan panggung/isi halaman melebar memakai
 ruangnya; pegangannya ikut pindah ke tepi layar untuk membukanya lagi. Di bawah
 1280 px panel itu memang sudah berupa lapisan geser dengan tombolnya sendiri.
@@ -165,6 +286,14 @@ Panggungnya tidak pernah benar-benar diam: panorama **berputar pelan sendiri**
 dilepas — tombol putar di kluster kanan bawah mematikannya. Tiap penanda juga
 berdenyut halus.
 
+Seluruh tahapannya bergerak satu arah — masuk. Fase menoleh hanya memutar arah
+pandang, lalu dorongan majunya terjadi **di dalam** padu-silang (zoom 46 → 56),
+jadi tidak ada tarikan mundur di ujung; keluar dari stasiun barulah melebar
+kembali. Penandanya ikut memudar dulu sebelum gambar berganti, dan kamera
+**tidak** diputar lagi saat berpadu-silang — arah pandang yang sudah dituju dipertahankan,
+karena memutar ulang di tengah pudaran itulah yang dulu terlihat seperti
+berkedip.
+
 Perpindahannya tanpa layar tunggu, dibuat seperti berjalan ke lokasinya: begitu
 penanda diklik kamera **menoleh ke penanda itu** (penandanya membesar), lalu
 **mendekat** (zoom 45 → 60), panorama lama **berpadu-silang** ke panorama baru
@@ -179,6 +308,10 @@ penanda, jadi rangkaian ini tidak menunggu `GET /api/stations/{kode}` selesai �
 data stasiun menyusul untuk panel kanan dan hotspot. Veil "Memuat panorama"
 hanya tersisa untuk pemuatan bola pertama kali.
 
+Tekstur pratinjau (2048 px, ±150–300 KB) dimuat lebih dulu sementara berkas HD
+(4096 px, ±0,4–1,4 MB) diunduh **berbarengan** lewat `preloadPanorama()`, lalu ditukar
+begitu gerakan kameranya selesai — jadi masa buramnya sependek animasi, bukan
+sepanjang unduhan. Kunjungan berikutnya memakai cache, praktis langsung tajam.
 Tekstur kecil dimuat lebih dulu lalu ditukar dengan versi HD tanpa loader, dan
 seluruh kanvas diberi gradasi matahari (`stageFilter`) plus lapisan malam
 (`nightWash`) — panoramanya diambil siang hari, jadi senja dan malam dilukis di
@@ -255,8 +388,11 @@ Buka `http://localhost:8000`. Akun hasil seeder:
 
 | Email | Kata sandi | Peran |
 |---|---|---|
-| admin@bwssulawesi5.go.id | password | admin |
-| operator@bwssulawesi5.go.id | password | operator |
+| admin@bwssulawesi5.go.id | password | Administrator |
+| operator@bwssulawesi5.go.id | password | Operator Ruang Kendali |
+
+Akun lain dibuat lewat menu **Pengguna & Akses** setelah masuk sebagai
+administrator.
 
 Untuk pengembangan frontend: `npm run dev` (Vite HMR) berdampingan dengan
 `php artisan serve`.
@@ -281,7 +417,7 @@ hasilnya sebagai aset siap pakai di luar aplikasi:
 
 ```
 D:\BE Software\Panoramic 360 HD\
-    panorama\<kode>.jpg   5120x2560 (base-dam 6144x3072), JPEG q95
+    panorama\<kode>.jpg   7096x3548 hasil upscale, JPEG q95
     map\day.jpg           4565x2597, UI bawaan render sudah dihapus + full-bleed
     map\night.jpg
     map\meta.json         ukuran kanvas + inset area foto
@@ -302,8 +438,8 @@ ulang master yang sudah ada.
   menaikkan resolusinya, lalu membangkitkan varian fajar dan senja dari
   pasangan siang/malam. Keluaran 4565x2597.
 - `build_panorama_assets.py` menormalkan tiap panorama ke rasio 2:1
-  (equirectangular) dan mengekspor tiga tingkat: HD 5120x2560 (Base Dam
-  6144x3072 karena sumbernya memang 7096x3548), `preview/` 1024x512, dan
+  (equirectangular) dan mengekspor tiga tingkat: HD 4096x2048 q82, `preview/`
+  2048x1024 q72, dan
   `thumb/` 560x280.
 
 ### Kanvas full-bleed
@@ -478,12 +614,19 @@ Semua di bawah sesi login (`/api/...`):
 | GET/POST | `/api/reports`, `/api/reports/{id}/download` | laporan |
 | GET/POST | `/api/settings` | preferensi tampilan & ambang batas |
 
+Endpoint yang menulis dijaga hak akses: `stations.move` untuk kedua endpoint
+posisi penanda, `alerts.handle` untuk peringatan, `maintenance.*` untuk desk
+perawatan, `reports.create` untuk laporan, dan `thresholds.edit` untuk
+`POST /api/settings`. Peran tanpa hak itu menerima 403.
+
 Interval polling browser diatur di `config/dam.php` (`refresh`).
 
 ---
 
 ## Struktur data
 
+- `roles` — peran: slug, nama, sisi perawatan, dan daftar hak aksesnya.
+  `users.role` menyimpan slug-nya.
 - `dams` — identitas dan elevasi acuan bendungan.
 - `sensor_stations` — 16 stasiun; `map_x`/`map_y` adalah posisi dalam persen
   terhadap render bendungan (bukan lat/lon), `panorama` menunjuk berkas `.webp`.
@@ -547,6 +690,34 @@ tests/Feature/              API monitoring, ingest, autentikasi
   import; bundel awal ±80 kB.
 
 ---
+
+## Kecepatan
+
+Halaman dirender di server, jadi yang terasa sebagai "loading" saat berpindah
+menu adalah waktu server menyiapkan halaman berikutnya. Yang sudah dikerjakan di
+sisi aplikasi:
+
+- **Halaman berikutnya disiapkan saat kursor mendekat.** Layout memasang aturan
+  `speculationrules`, sehingga Chromium sudah membangun halaman tujuan sebelum
+  tautannya diklik. Panggung 360 sengaja dikecualikan. Peramban lain
+  mengabaikannya tanpa efek samping.
+- **Bilah kemajuan tipis** muncul begitu tautan diklik, jadi klik tidak pernah
+  terasa hilang; polling data ikut dihentikan agar permintaan halaman tidak
+  mengantre di belakangnya.
+- **Berkas grafik dipangkas** dari 953 kB menjadi 227 kB (gzip 318 kB → 79 kB)
+  dengan menamai komponen ECharts yang benar-benar dipakai.
+- **Penanda tidak diminta ulang** tepat setelah halaman dimuat — datanya sudah
+  ikut di dalam halaman — dan permintaan dashboard/stasiun kini berjalan
+  bersamaan, bukan berurutan.
+
+Sisanya ada di konfigurasi server, dan dampaknya paling besar:
+
+| Langkah | Kenapa |
+|---|---|
+| Aktifkan **OPcache** (`zend_extension=opcache`, `opcache.enable=1` di `php.ini`) | Tanpa itu setiap permintaan mengompilasi ulang seluruh berkas PHP. Di mesin pengembangan ini ekstensinya belum terpasang sama sekali. |
+| Jangan pakai `php artisan serve` untuk penggunaan sungguhan | Server bawaan melayani **satu permintaan pada satu waktu**: polling data menahan permintaan halaman. Pakai Nginx/Apache + PHP-FPM, FrankenPHP, atau Laravel Octane. |
+| `php artisan optimize` saat rilis | Menyimpan cache config, route, dan view. (`php artisan optimize:clear` untuk mengembalikannya saat mengembangkan.) |
+| `composer install --no-dev --optimize-autoloader` | Autoloader kelas yang sudah dipetakan. |
 
 ## Pengujian
 

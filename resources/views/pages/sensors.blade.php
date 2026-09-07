@@ -1,22 +1,73 @@
 @extends('layouts.app')
 
-@section('title', 'Data Sensor')
+@section('title', 'Data Instrumentasi')
 
 @section('stage')
-    <x-page-shell wide title="Data Sensor"
-                  subtitle="{{ count($stations) }} stasiun instrumentasi terpasang di Bendungan Budong Budong.">
+    @php($activeLabel = $activeType ? ($types[$activeType] ?? $activeType) : null)
+
+    <x-page-shell wide title="Data Instrumentasi"
+                  subtitle="{{ $activeType
+                      ? count($stations).' dari '.$totalStations.' stasiun — '.$activeLabel
+                      : $totalStations.' stasiun instrumentasi terpasang di Bendungan Budong Budong.' }}">
         <x-slot:actions>
-            <div class="glass glass--chip flex max-w-full flex-wrap items-center gap-1 overflow-x-auto p-1.5">
-                <a href="{{ route('sensors') }}"
-                   class="rounded-xl px-3 py-1.5 text-[12px] font-semibold transition max-sm:px-4 max-sm:py-3 {{ $activeType ? 'text-mist-300 hover:bg-white/8' : 'bg-brand-500/90 text-white' }}">
-                    Semua
-                </a>
-                @foreach ($types as $type => $label)
-                    <a href="{{ route('sensors', ['tipe' => $type]) }}"
-                       class="rounded-xl px-3 py-1.5 text-[12px] font-semibold transition max-sm:px-4 max-sm:py-3 {{ $activeType === $type ? 'bg-brand-500/90 text-white' : 'text-mist-300 hover:bg-white/8' }}">
-                        {{ $label }}
+            {{-- Thirteen types laid out as pills wrapped onto a second line and
+                 pushed the table down; one menu holds them all and says which
+                 one is on. --}}
+            <div class="flex items-center gap-2">
+                @if ($activeType)
+                    <a href="{{ route('sensors') }}"
+                       class="glass glass--chip glass-button gap-1.5 px-3 py-2.5 text-[12px] font-semibold"
+                       title="Hapus filter" aria-label="Hapus filter tipe">
+                        <x-icon name="x" class="size-3.5"/>
+                        Semua
                     </a>
-                @endforeach
+                @endif
+
+                <div class="relative" x-data="{ open: false }"
+                     @click.outside="open = false"
+                     @keydown.escape.stop="open = false">
+                    <button type="button"
+                            class="glass glass--chip glass-button gap-2 px-3.5 py-2.5 text-[12px] font-semibold"
+                            aria-haspopup="menu" :aria-expanded="open"
+                            @click="open = ! open">
+                        <x-icon name="filter" class="size-4 shrink-0 text-mist-300"/>
+                        <span class="max-w-[190px] truncate">{{ $activeLabel ?? 'Semua tipe' }}</span>
+                        <span class="tnum rounded-full bg-white/10 px-1.5 py-0.5 text-[10px] font-bold">
+                            {{ count($stations) }}
+                        </span>
+                        <x-icon name="chevron-down" class="size-4 shrink-0 text-mist-300 transition"
+                                ::class="open && 'rotate-180'"/>
+                    </button>
+
+                    <div x-show="open" x-cloak x-transition.origin.top.right
+                         {{-- The trigger sits on the left of the header on a phone
+                              and on the right from sm up; the menu hangs off the
+                              same edge or it runs off the screen. --}}
+                         class="glass glass--panel glass--menu absolute left-0 z-20 mt-2 w-[268px] max-w-[calc(100vw-2rem)] p-1.5
+                                sm:left-auto sm:right-0"
+                         role="menu" aria-label="Filter tipe stasiun">
+
+                        <a href="{{ route('sensors') }}" role="menuitem"
+                           class="nav-item gap-2.5 text-[12.5px] {{ $activeType ? '' : 'nav-item--active' }}"
+                           @if (! $activeType) aria-current="true" @endif>
+                            <span class="flex-1 truncate">Semua tipe</span>
+                            <span class="tnum text-[11px] text-mist-400">{{ $totalStations }}</span>
+                        </a>
+
+                        <div class="my-1.5 h-px bg-white/10"></div>
+
+                        <div class="scroll-y max-h-[320px] pr-0.5">
+                            @foreach ($types as $type => $label)
+                                <a href="{{ route('sensors', ['tipe' => $type]) }}" role="menuitem"
+                                   class="nav-item gap-2.5 text-[12.5px] {{ $activeType === $type ? 'nav-item--active' : '' }}"
+                                   @if ($activeType === $type) aria-current="true" @endif>
+                                    <span class="flex-1 truncate">{{ $label }}</span>
+                                    <span class="tnum text-[11px] text-mist-400">{{ $typeCounts[$type] ?? 0 }}</span>
+                                </a>
+                            @endforeach
+                        </div>
+                    </div>
+                </div>
             </div>
         </x-slot:actions>
 
@@ -129,8 +180,4 @@
             @endforelse
         </ul>
     </x-page-shell>
-@endsection
-
-@section('panel')
-    <div></div>
 @endsection

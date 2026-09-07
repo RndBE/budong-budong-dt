@@ -50,6 +50,31 @@
     }
 
     /*
+     * Tailwind v4's preflight gives buttons `cursor: default`, so every control
+     * in the app pointed at nothing and read as scenery. Anything that acts on
+     * a click says so under the pointer.
+     */
+    button:not(:disabled),
+    [role='button']:not([aria-disabled='true']),
+    [role='tab'],
+    summary,
+    label:has(> input[type='checkbox']),
+    label:has(> input[type='radio']),
+    input[type='checkbox'],
+    input[type='radio'],
+    select {
+        cursor: pointer;
+    }
+
+    button:disabled,
+    [aria-disabled='true'],
+    input:disabled,
+    select:disabled,
+    fieldset:disabled label {
+        cursor: not-allowed;
+    }
+
+    /*
      * Chrome metrics. Every floating panel and every stage offset is derived
      * from these, so the dashboard scales from a 1280 laptop to a 4K control
      * room screen without a single hard-coded pixel offset in the views.
@@ -142,7 +167,12 @@
      * column: below xl it is already a slide-over with its own toggle.
      */
     @media (min-width: 1280px) {
-        .app-frame--panel-collapsed {
+        /* Pages that yield no panel: the column belongs to the content. */
+    .app-frame--no-panel {
+        --panel-w: 0px;
+    }
+
+    .app-frame--panel-collapsed {
             --panel-w: 0px;
         }
     }
@@ -461,6 +491,27 @@
         box-shadow: 0 0 0 5px rgb(3 11 20 / 0.55);
     }
 
+    /*
+     * A bare field inside a glass pill is not its own control: outlining the
+     * input draws a hard rectangle inside a rounded chip. Put the ring on the
+     * pill instead, so the whole search box lights up as one thing. Browsers
+     * without `:has()` keep the plain ring on the input.
+     */
+    @supports selector(:has(*)) {
+        .glass:has(> input:focus-visible),
+        .glass:has(> .glass--inset > input:focus-visible) {
+            outline: 2px solid #7cc4ff;
+            outline-offset: 2px;
+            box-shadow: 0 0 0 5px rgb(3 11 20 / 0.55);
+        }
+
+        .glass > input:focus-visible,
+        .glass > .glass--inset > input:focus-visible {
+            outline: none;
+            box-shadow: none;
+        }
+    }
+
     /* Interactive elements --------------------------------------- */
 
     .glass-button {
@@ -580,6 +631,154 @@
         background-repeat: no-repeat;
         transform-origin: center;
         will-change: opacity, transform, filter;
+    }
+
+    /*
+    | The page backdrop pans instead of sitting still.
+    |
+    | An equirectangular panorama wraps horizontally, so repeating it and
+    | translating by exactly one tile loops without a seam. The tile is sized
+    | in viewport height (2:1, and half again as tall as the screen so it
+    | always covers), which is what keeps the translation and the tile the
+    | same length. Transform is composited; animating background-position
+    | would repaint a blurred full-screen image every frame.
+    */
+    .backdrop-pan {
+        --pan-tile: 240vh;
+
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: 0;
+        width: calc(100% + var(--pan-tile));
+        background-image: none;
+        background-repeat: repeat-x;
+        background-size: var(--pan-tile) calc(var(--pan-tile) / 2);
+        background-position: 0 center;
+        transform: translate3d(0, 0, 0);
+        will-change: transform, opacity, filter;
+        animation: backdrop-pan 240s linear infinite;
+    }
+
+    @keyframes backdrop-pan {
+        to {
+            transform: translate3d(calc(-1 * var(--pan-tile)), 0, 0);
+        }
+    }
+
+    /* On a phone the tile would be several screens wide: hold it still. */
+    @media (max-width: 639px) {
+        .backdrop-pan {
+            width: 100%;
+            background-size: cover;
+            background-position: center;
+            animation: none;
+        }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        .backdrop-pan {
+            animation: none;
+        }
+    }
+
+    /*
+    | Dialogs.
+    |
+    | The header sits at z-50, so a dialog has to clear it; the scrim dims the
+    | page behind it because the chrome is glass and would otherwise read
+    | through. Blur only where the browser has it.
+    */
+    /*
+    | The scrim dims with paint alone.
+    |
+    | A `backdrop-filter` here made the dialog flash on open: the new filter
+    | layer forces Chromium to re-rasterize everything under it, and under it is
+    | a full-screen blurred panorama that is already animating. The page behind
+    | is blurred by the page shell anyway, so a plain dim looks the same and
+    | arrives on the first frame.
+    */
+    /*
+    | Navigation progress.
+    |
+    | Server rendering means a click is followed by a wait with nothing on
+    | screen; this bar starts the moment the link is followed and dies with the
+    | page it belongs to. It never reports completion — the new document
+    | replacing this one is the completion.
+    */
+    .nav-progress {
+        position: fixed;
+        top: 0;
+        left: 0;
+        z-index: 70;
+        height: 2px;
+        width: 0;
+        border-radius: 0 2px 2px 0;
+        background: linear-gradient(90deg, rgb(31 139 245 / 0.4), rgb(120 194 255));
+        box-shadow: 0 0 12px rgb(31 139 245 / 0.7);
+        opacity: 0;
+        pointer-events: none;
+    }
+
+    .nav-progress--busy {
+        opacity: 1;
+        /* Creeps towards the edge without ever claiming to have arrived. */
+        animation: nav-progress 8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+
+    @keyframes nav-progress {
+        0% {
+            width: 0;
+        }
+        40% {
+            width: 62%;
+        }
+        100% {
+            width: 92%;
+        }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        .nav-progress--busy {
+            animation: none;
+            width: 100%;
+        }
+    }
+
+    .modal-scrim {
+        position: fixed;
+        inset: 0;
+        z-index: 60;
+        display: grid;
+        place-items: center;
+        padding: var(--gap, 12px);
+        background: rgba(3, 8, 18, 0.72);
+    }
+
+    .modal-card {
+        width: min(680px, 100%);
+        max-height: calc(100dvh - 2 * var(--gap, 12px));
+        overflow: hidden;
+
+        /*
+        | No backdrop blur on a card that is animating.
+        |
+        | `.glass--menu` is 96% opaque, so the blur behind it buys nothing —
+        | but scaling and fading a backdrop-filtered layer makes Chromium
+        | rebuild it every frame, which is the flash on the way in.
+        */
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
+        background: hsl(var(--glass-tint) / 0.97);
+        will-change: transform, opacity;
+    }
+
+    .modal-card--wide {
+        width: min(940px, 100%);
+    }
+
+    .modal-card--narrow {
+        width: min(430px, 100%);
     }
 
     .marker-enter {
@@ -804,6 +1003,18 @@
 .sphere-pin.is-target .sphere-pin__label {
     opacity: 1;
     filter: brightness(1.2);
+}
+
+/* Leaving for a station panorama: the pins go with the picture, not before. */
+.sphere--departing .sphere-pin {
+    opacity: 0;
+    transition: opacity 240ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .sphere--departing .sphere-pin {
+        transition: none;
+    }
 }
 
 /* Pointed out by a search: keep its name up even with labels switched off. */

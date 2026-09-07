@@ -42,11 +42,11 @@ SOURCES = {
     "night": "Panoramic_Base_Dam_Malam.png",
 }
 
-HD_WIDTH = 6144
-PREVIEW_WIDTH = 1024
+HD_WIDTH = 4096
+PREVIEW_WIDTH = 2048   # the sphere is shown at this size while the HD loads
 THUMB = (560, 280)
 
-QUALITY_HD = 90
+QUALITY_HD = 82
 QUALITY_PREVIEW = 72
 QUALITY_THUMB = 80
 

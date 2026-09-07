@@ -1,3 +1,5 @@
+@php($stationSearch = request()->routeIs('twin', 'twin.station'))
+
 <div class="flex items-start gap-4 max-lg:gap-2">
 
     {{-- Identity --}}
@@ -61,6 +63,12 @@
                 <span class="status-dot bg-state-normal"></span>
             </div>
         </div>
+
+        {{-- Only the digital twin has pins to aim at, so the field lives with
+             the stage rather than in the header of every page. --}}
+        @if ($stationSearch)
+            @include('partials.station-search')
+        @endif
     </div>
 
     {{-- Actions --}}
@@ -72,6 +80,10 @@
                   x-text="$store.site.dashboard ? $store.site.dashboard.alerts.filter(a => !a.is_resolved).length : {{ $activeAlerts ?? 0 }}">
             </span>
         </a>
+
+        @if ($stationSearch)
+            @include('partials.station-search', ['compact' => true])
+        @endif
 
         <button type="button" class="glass glass--chip glass-button size-11" title="Bantuan" aria-label="Bantuan"
                 x-data @click="$dispatch('open-help')">
@@ -96,10 +108,20 @@
                     <span class="min-w-0">
                         <span class="block truncate text-[13px] font-semibold text-white">{{ auth()->user()?->name }}</span>
                         <span class="block truncate text-[11px] text-mist-300">{{ auth()->user()?->unit }}</span>
+                        <span class="mt-0.5 inline-block rounded-md bg-brand-500/18 px-1.5 py-0.5 text-[10px] font-semibold text-brand-200">
+                            {{ auth()->user()?->roleLabel() }}
+                        </span>
                     </span>
                 </div>
 
                 <div class="my-1.5 h-px bg-white/10"></div>
+
+                @can('users.manage')
+                    <a href="{{ route('users') }}" class="nav-item gap-2.5 text-[13px]">
+                        <x-icon name="users" class="size-4 shrink-0"/>
+                        Pengguna &amp; Akses
+                    </a>
+                @endcan
 
                 <a href="{{ route('settings') }}" class="nav-item gap-2.5 text-[13px]">
                     <x-icon name="cog" class="size-4 shrink-0"/>

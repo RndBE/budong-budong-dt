@@ -12,6 +12,22 @@ import twinSphere from './components/twin-sphere.js';
 
 const PHASES = ['night', 'dawn', 'day', 'dusk'];
 
+/**
+ * Run `task` now, or when a prerendered document is activated.
+ *
+ * Chromium can build a page in the background from a speculation rule; while
+ * it does, `document.prerendering` is true and the reader has not seen it.
+ */
+function whenPageIsActive(task) {
+    if (document.prerendering) {
+        document.addEventListener('prerenderingchange', task, { once: true });
+
+        return;
+    }
+
+    task();
+}
+
 /** Turn a {primary, secondary, mix} scene into per-still opacities. */
 function phaseWeights(scene) {
     const weights = { night: 0, dawn: 0, day: 0, dusk: 0 };
@@ -47,12 +63,23 @@ Alpine.store('site', {
     },
     lastTickAt: 0,
 
-    start(boot, dashboard = null) {
+    /** Messages from the service desk nobody has opened yet. */
+    maintenanceUnread: 0,
+    abilities: [],
+
+    /** Ability codes from config/access.php, as granted to the signed-in role. */
+    can(ability) {
+        return this.abilities.includes(ability);
+    },
+
+    start(boot, dashboard = null, live = true) {
         this.boot = boot;
         this.environment = boot.environment;
         this.markers = boot.markers ?? [];
         this.dashboard = dashboard;
         this.skin = boot.skin ?? 'auto';
+        this.maintenanceUnread = boot.maintenance_unread ?? 0;
+        this.abilities = boot.can ?? [];
 
         // Trust the server clock: the browser's own may be off by minutes.
         this.skewMs = new Date(boot.environment.clock.iso).getTime() - Date.now();
@@ -73,13 +100,50 @@ Alpine.store('site', {
         window.requestAnimationFrame(frame);
         window.setInterval(() => this.advance(), 250);
 
-        this.stopPolling.push(poll(() => this.refreshEnvironment(), boot.refresh.environment));
-        this.stopPolling.push(poll(() => this.refreshDashboard(), boot.refresh.dashboard));
+        /*
+        | A prerendered page is a real document that nobody has opened yet:
+        | polling from it would spend requests — and, on a dev server that
+        | answers one at a time, the reader's own page — on a guess. Wait for
+        | the activation.
+        */
+        whenPageIsActive(() => this.startPolling(boot, dashboard, live));
+    },
 
-        // Pages that render the summary panel without a server-side payload.
+    /** @internal Called once the document is the one being looked at. */
+    startPolling(boot, dashboard, live) {
+        this.stopPolling.push(poll(() => this.refreshEnvironment(), boot.refresh.environment));
+
+        /*
+        | A page with no summary panel shows dashboard numbers only in the
+        | system monitor, so it keeps the poll but at a quarter of the rate:
+        | four fewer round trips a minute on every screen that is not reading
+        | them. `live` comes from the layout.
+        */
+        this.stopPolling.push(poll(
+            () => this.refreshDashboard(),
+            boot.refresh.dashboard * (live ? 1 : 4),
+        ));
+
+        /*
+        | The markers were inlined in the boot payload a moment ago, so the
+        | first refresh only wants the numbers. Asking for both meant two more
+        | round trips before the page had finished settling.
+        */
         if (!dashboard) {
-            this.refreshDashboard().catch(() => {});
+            this.refreshDashboard(false).catch(() => {});
         }
+    },
+
+    /**
+     * Stop the background polls.
+     *
+     * Called when a navigation starts: the page is on its way out, and a dev
+     * server that handles one request at a time would otherwise make the next
+     * page's HTML queue behind a refresh nobody will read.
+     */
+    pausePolling() {
+        this.stopPolling.forEach((stop) => stop());
+        this.stopPolling = [];
     },
 
     /** Move simulated time forward; called once per animation frame. */
@@ -270,16 +334,55 @@ Alpine.store('site', {
         this.environment = await getJson('/api/environment');
     },
 
-    async refreshDashboard() {
-        this.dashboard = await getJson('/api/dashboard');
-        this.markers = (await getJson('/api/stations')).data;
+    /**
+     * The numbers, and — unless the caller says otherwise — the markers.
+     *
+     * Both used to be fetched one after the other on every tick. The two calls
+     * are independent, so they go together, and the very first refresh after a
+     * page load skips the markers it was just handed.
+     */
+    async refreshDashboard(withMarkers = true) {
+        if (!withMarkers) {
+            this.dashboard = await getJson('/api/dashboard');
+
+            return;
+        }
+
+        const [dashboard, stations] = await Promise.all([
+            getJson('/api/dashboard'),
+            getJson('/api/stations'),
+        ]);
+
+        this.dashboard = dashboard;
+        this.markers = stations.data;
     },
 
     /** Background layers for the current sun phase, or a manual override. */
     get scene() {
+        return this.sceneOver(this.environment?.scene?.assets);
+    },
+
+    /**
+     * The page backdrop: the same phase choice over the base panorama.
+     *
+     * The preview tier is enough — the layer is blurred and sits under a dark
+     * gradient — and it is a fifth of the weight of the orthographic stills.
+     */
+    get backdrop() {
+        const phases = this.environment?.stage?.base?.phases;
+
+        const assets = phases
+            ? Object.fromEntries(Object.entries(phases).map(([phase, asset]) => [phase, asset.preview]))
+            : null;
+
+        return this.sceneOver(assets ?? this.environment?.scene?.assets);
+    },
+
+    /** Pick the two stills and their mix for the current phase. */
+    sceneOver(assets) {
         const scene = this.environment?.scene;
 
-        if (!scene) {
+        if (!scene || !assets) {
             return { primary: null, secondary: null, mix: 0, grade: {} };
         }
 
@@ -287,8 +390,8 @@ Alpine.store('site', {
 
         if (simulated && this.skin === 'auto') {
             return {
-                primary: scene.assets[simulated.primary],
-                secondary: scene.assets[simulated.secondary],
+                primary: assets[simulated.primary],
+                secondary: assets[simulated.secondary],
                 mix: simulated.mix,
                 grade: simulated.grade,
                 phase: simulated.primary,
@@ -299,8 +402,8 @@ Alpine.store('site', {
 
         if (this.skin !== 'auto') {
             return {
-                primary: scene.assets[this.skin],
-                secondary: scene.assets[this.skin],
+                primary: assets[this.skin],
+                secondary: assets[this.skin],
                 mix: 0,
                 grade: scene.grade,
                 phase: this.skin,
@@ -308,8 +411,8 @@ Alpine.store('site', {
         }
 
         return {
-            primary: scene.assets[scene.primary],
-            secondary: scene.assets[scene.secondary],
+            primary: assets[scene.primary],
+            secondary: assets[scene.secondary],
             mix: scene.mix,
             grade: scene.grade,
             phase: scene.primary,
@@ -493,58 +596,410 @@ Alpine.data('metricSpark', (metricKey) => ({
     },
 }));
 
+/**
+ * Analytics: a grid of every parameter, and one parameter in detail.
+ *
+ * The grid is the way in — all of a station's parameters at once, or the
+ * headline parameter of every station, on one shared time range so they can
+ * actually be compared. Picking a card drills into it; the station and the
+ * range come along, because being made to choose them twice is what makes two
+ * separate screens tiring.
+ *
+ * ECharts instances are never kept on this state — Alpine's proxy and a
+ * canvas library do not mix. `getInstanceByDom` in the chart helpers is the
+ * registry.
+ */
+/**
+ * Analytics: every parameter as its own chart, or the chosen ones in one.
+ *
+ * `grafik` lays out a card per parameter — all of a station's, or the headline
+ * parameter of every station — on one shared range, which is the only way
+ * charts side by side can be compared. `analisa` puts the parameters the
+ * reader ticks into a single chart; a card in the grid is a shortcut into it.
+ *
+ * ECharts instances are never kept on this state — Alpine's proxy and a canvas
+ * library do not mix. `getInstanceByDom` in the chart helpers is the registry.
+ */
 Alpine.data('analyticsBoard', (stations) => ({
     stations,
-    stationCode: stations[0]?.code ?? null,
-    metricKey: stations[0]?.metrics[0]?.key ?? null,
-    range: '7d',
+    mode: 'grafik',
+    scope: localStorage.getItem('analytics.scope') ?? (stations[0]?.code ?? ''),
+    range: localStorage.getItem('analytics.range') ?? '7d',
+
+    /** Series per grid card, keyed by card id. */
+    data: {},
+
+    /** What `analisa` is drawing: `{ code, key }` in the order they were picked. */
+    picked: [],
+    payloads: [],
     loading: false,
-    payload: null,
 
     init() {
-        this.load();
+        const stored = localStorage.getItem('analytics.mode');
+
+        this.mode = stored === 'analisa' || stored === 'detail' ? 'analisa' : 'grafik';
+
+        if (!this.stations.some((station) => station.code === this.scope) && this.scope !== 'semua') {
+            this.scope = this.stations[0]?.code ?? '';
+        }
+
+        // Cards draw when they come into view: sixteen charts built at once is
+        // a second of frozen page for rows nobody has scrolled to yet.
+        this.slots = new Map();
+        this.visible = new Set();
+        this.observer = new IntersectionObserver((entries) => {
+            entries.forEach((entry) => {
+                const id = entry.target.dataset.cardId;
+
+                if (!entry.isIntersecting) {
+                    this.visible.delete(id);
+
+                    return;
+                }
+
+                this.visible.add(id);
+                this.drawCard(id);
+            });
+        }, { rootMargin: '160px' });
+
+        this.picked = this.choices.slice(0, 1).map((choice) => ({ code: choice.code, key: choice.metric.key }));
+
+        if (this.mode === 'analisa') {
+            this.$nextTick(() => this.loadAnalysis());
+        }
+
         window.addEventListener('resize', () => resizeCharts(this.$root));
     },
 
-    get metrics() {
-        return this.stations.find((station) => station.code === this.stationCode)?.metrics ?? [];
+    /* --------------------------------------------------------- what exists */
+
+    /**
+     * Every parameter the current scope offers.
+     *
+     * One station: all of its parameters. Every station: the headline
+     * parameter of each, which is what makes them comparable at a glance.
+     */
+    get choices() {
+        if (this.scope === 'semua') {
+            return this.stations
+                .filter((station) => station.metrics.length)
+                .map((station) => ({
+                    id: station.code,
+                    code: station.code,
+                    station: station.name,
+                    metric: station.metrics[0],
+                }));
+        }
+
+        const station = this.stations.find((item) => item.code === this.scope);
+
+        return (station?.metrics ?? []).map((metric) => ({
+            id: `${station.code}:${metric.key}`,
+            code: station.code,
+            station: station.name,
+            metric,
+        }));
     },
 
-    onStationChange() {
-        this.metricKey = this.metrics[0]?.key ?? null;
-        this.load();
+    get cards() {
+        return this.choices;
     },
 
-    async load() {
-        if (!this.stationCode || !this.metricKey) {
+    cardById(id) {
+        return this.choices.find((choice) => choice.id === id) ?? null;
+    },
+
+    /* ---------------------------------------------------------------- grid */
+
+    /** Register a card's canvas with the observer as Alpine renders it. */
+    observe(element) {
+        this.slots.set(element.dataset.cardId, element);
+        this.observer.observe(element);
+    },
+
+    /**
+     * Draw the cards that are on screen right now.
+     *
+     * The observer only reports a *change* in intersection, so coming back
+     * from Analisa — where every card was `display: none` — left the grid
+     * blank until something moved. This measures instead of waiting.
+     */
+    drawInView() {
+        const height = window.innerHeight || 0;
+
+        this.slots.forEach((element, id) => {
+            const box = element.getBoundingClientRect();
+
+            if (box.bottom > -160 && box.top < height + 160) {
+                this.visible.add(id);
+                this.drawCard(id);
+            }
+        });
+    },
+
+    async drawCard(id) {
+        const card = this.cardById(id);
+        const element = this.slots.get(id);
+
+        if (!card || !element || this.data[id]?.pending) {
+            return;
+        }
+
+        if (!this.data[id]) {
+            this.data[id] = { pending: true };
+
+            try {
+                const payload = await getJson(`/api/stations/${card.code}/series/${card.metric.key}`, {
+                    range: this.range,
+                });
+
+                this.data[id] = { pending: false, ...payload };
+            } catch {
+                this.data[id] = { pending: false, failed: true };
+
+                return;
+            }
+        }
+
+        const series = this.data[id];
+
+        if (!series?.points) {
+            return;
+        }
+
+        await seriesChart(element, [{
+            name: series.metric.label,
+            points: series.points,
+            type: series.metric.chart_type,
+        }], {
+            unit: series.metric.unit,
+            compact: true,
+            zoom: false,
+            thresholds: this.thresholdsOf(series.metric),
+        });
+    },
+
+    thresholdsOf(metric) {
+        return [
+            { value: metric.normal_max, label: 'Batas Normal', color: '#34d399' },
+            { value: metric.warning, label: 'Waspada', color: '#fbbf24' },
+        ];
+    },
+
+    /* -------------------------------------------------------------- picking */
+
+    isPicked(choice) {
+        return this.picked.some((item) => item.code === choice.code && item.key === choice.metric.key);
+    },
+
+    /** Units already on the chart — two axes is the limit that stays readable. */
+    get pickedUnits() {
+        return [...new Set(this.picked.map((item) => this.metricOf(item)?.unit ?? ''))];
+    },
+
+    /**
+     * Whether a parameter can join the chart.
+     *
+     * A third unit would need a third scale, and three scales on one chart is
+     * a picture nobody can read — those chips are offered as disabled with the
+     * reason on them.
+     */
+    canPick(choice) {
+        if (this.isPicked(choice)) {
+            return true;
+        }
+
+        return this.pickedUnits.length < 2 || this.pickedUnits.includes(choice.metric.unit ?? '');
+    },
+
+    togglePick(choice) {
+        if (!this.canPick(choice)) {
+            return;
+        }
+
+        const already = this.isPicked(choice);
+
+        if (already && this.picked.length === 1) {
+            return; // The chart must keep at least one series.
+        }
+
+        this.picked = already
+            ? this.picked.filter((item) => !(item.code === choice.code && item.key === choice.metric.key))
+            : [...this.picked, { code: choice.code, key: choice.metric.key }];
+
+        this.loadAnalysis();
+    },
+
+    metricOf(item) {
+        return this.stations
+            .find((station) => station.code === item.code)
+            ?.metrics.find((metric) => metric.key === item.key) ?? null;
+    },
+
+    stationOf(item) {
+        return this.stations.find((station) => station.code === item.code) ?? null;
+    },
+
+    /* -------------------------------------------------------------- analisa */
+
+    /** A card in the grid is a shortcut: that parameter alone, in analisa. */
+    open(card) {
+        this.picked = [{ code: card.code, key: card.metric.key }];
+        this.setMode('analisa');
+        this.loadAnalysis();
+    },
+
+    async loadAnalysis() {
+        if (!this.picked.length) {
             return;
         }
 
         this.loading = true;
 
         try {
-            this.payload = await getJson(`/api/stations/${this.stationCode}/series/${this.metricKey}`, {
-                range: this.range,
+            const payloads = await Promise.all(this.picked.map((item) => getJson(
+                `/api/stations/${item.code}/series/${item.key}`,
+                { range: this.range },
+            )));
+
+            this.payloads = payloads;
+
+            await this.$nextTick();
+
+            const units = [...new Set(payloads.map((payload) => payload.metric.unit ?? ''))].slice(0, 2);
+
+            const chart = await seriesChart(this.$refs.analysis, payloads.map((payload, index) => ({
+                name: this.picked.length > 1 && this.scope === 'semua'
+                    ? `${this.stationOf(this.picked[index])?.name ?? ''} — ${payload.metric.label}`
+                    : payload.metric.label,
+                points: payload.points,
+                type: payload.metric.chart_type,
+                axis: Math.max(0, units.indexOf(payload.metric.unit ?? '')),
+            })), {
+                units,
+                // Thresholds belong to one parameter; drawing every set turns
+                // the chart into a ladder.
+                thresholds: payloads.length === 1 ? this.thresholdsOf(payloads[0].metric) : [],
             });
 
-            this.$nextTick(async () => {
-                await seriesChart(this.$refs.chart, [
-                    {
-                        name: this.payload.metric.label,
-                        points: this.payload.points,
-                        type: this.payload.metric.chart_type,
-                    },
-                ], {
-                    unit: this.payload.metric.unit,
-                    thresholds: [
-                        { value: this.payload.metric.normal_max, label: 'Batas Normal', color: '#34d399' },
-                        { value: this.payload.metric.warning, label: 'Waspada', color: '#fbbf24' },
-                    ],
-                });
-            });
+            // The panel may have been hidden when the instance was created.
+            chart.resize();
         } finally {
             this.loading = false;
         }
+    },
+
+    /** The series the statistics belong to: the first one picked. */
+    get primary() {
+        return this.payloads[0] ?? null;
+    },
+
+    /* --------------------------------------------------------------- modes */
+
+    setMode(mode) {
+        this.mode = mode;
+        localStorage.setItem('analytics.mode', mode);
+
+        /*
+        | A chart built while its container was `display: none` measured zero
+        | and stayed a sliver. Whichever view is coming into sight gets a
+        | resize once the browser has laid it out.
+        */
+        this.$nextTick(() => {
+            if (mode === 'grafik') {
+                this.drawInView();
+            } else if (!this.payloads.length) {
+                this.loadAnalysis();
+            }
+
+            resizeCharts(this.$root);
+        });
+    },
+
+    backToGrid() {
+        this.setMode('grafik');
+    },
+
+    /** Everything already fetched is stale once the range or station changes. */
+    async refresh() {
+        this.data = {};
+        this.observer.disconnect();
+        this.slots.clear();
+        this.visible.clear();
+
+        // Alpine re-renders the cards, and their `x-init` observes them again.
+        await this.$nextTick();
+
+        if (this.mode === 'analisa') {
+            this.loadAnalysis();
+
+            return;
+        }
+
+        this.drawInView();
+    },
+
+    setScope(code) {
+        this.scope = code;
+        localStorage.setItem('analytics.scope', code);
+
+        // The parameters on offer changed with the scope; keep the ones that
+        // are still on offer, and fall back to the first if none are.
+        const offered = this.choices;
+
+        this.picked = this.picked.filter((item) => offered.some(
+            (choice) => choice.code === item.code && choice.metric.key === item.key,
+        ));
+
+        if (!this.picked.length) {
+            this.picked = offered.slice(0, 1).map((choice) => ({ code: choice.code, key: choice.metric.key }));
+        }
+
+        this.refresh();
+    },
+
+    setRange(range) {
+        this.range = range;
+        localStorage.setItem('analytics.range', range);
+        this.refresh();
+    },
+
+    /* --------------------------------------------------------------- shared */
+
+    /** Last reading of a card, formatted, or a dash while it is still coming. */
+    lastOf(id) {
+        const points = this.data[id]?.points;
+
+        return points?.length ? this.number(points.at(-1).v) : '—';
+    },
+
+    /** Change across the window on screen — the reason to look twice. */
+    deltaOf(id) {
+        const points = this.data[id]?.points;
+
+        if (!points || points.length < 2) {
+            return null;
+        }
+
+        return points.at(-1).v - points[0].v;
+    },
+
+    statusOf(code) {
+        return this.$store.site.markerByCode(code)?.status ?? null;
+    },
+
+    number(value) {
+        return Number.isFinite(value)
+            ? Number(value).toLocaleString('id-ID', { maximumFractionDigits: 3 })
+            : '—';
+    },
+
+    signed(value) {
+        if (!Number.isFinite(value)) {
+            return '—';
+        }
+
+        return `${value > 0 ? '+' : ''}${this.number(value)}`;
     },
 }));
 
@@ -578,6 +1033,423 @@ Alpine.data('reportForm', () => ({
         } finally {
             this.busy = false;
         }
+    },
+}));
+
+/**
+ * Station search in the header.
+ *
+ * On the digital twin it asks the stage to turn to the pin (the stage listens
+ * for `focus-station`); on any other page there is no stage to turn, so it
+ * opens that station's panorama instead.
+ */
+/**
+ * The maintenance desk: jobs, their conversation, and the log of what has been
+ * done. The control room and the service desk share the same threads, so the
+ * request, the answer and the outcome stay together instead of in a chat app.
+ */
+Alpine.data('maintenanceDesk', (tickets, history, desk) => ({
+    tab: 'pesan',
+    tickets,
+    history,
+    desk,
+    activeId: tickets.find((ticket) => ticket.unread > 0)?.id ?? tickets[0]?.id ?? null,
+    scope: 'aktif',
+    stationFilter: '',
+    draft: '',
+    sending: false,
+    error: null,
+
+    form: { open: false, title: '', station: '', type: 'korektif', priority: 'normal', body: '' },
+
+    /**
+     * Where the unread run started when this ticket was opened.
+     *
+     * Opening a thread marks it read, so the boundary has to be remembered
+     * before that happens or the divider would vanish in the same breath.
+     */
+    unreadFrom: null,
+
+    /**
+     * A message this reader wrote.
+     *
+     * The side of the desk is not enough: two operators share a side, and a
+     * colleague's line hanging on your own margin reads as your own. Older
+     * rows without an author fall back to the side.
+     */
+    mine(message) {
+        return message.user_id != null && this.desk.user_id != null
+            ? message.user_id === this.desk.user_id
+            : message.role === this.desk.role;
+    },
+
+    /** Two letters for the avatar; a name is not always two words. */
+    initials(name) {
+        const parts = String(name ?? '').trim().split(/\s+/).filter(Boolean);
+
+        if (parts.length === 0) {
+            return '?';
+        }
+
+        return (parts.length === 1 ? parts[0].slice(0, 2) : parts[0][0] + parts[1][0]).toUpperCase();
+    },
+
+    /** Only the last of your own messages carries a receipt. */
+    lastMine(ticket) {
+        return [...(ticket?.messages ?? [])].reverse().find((message) => this.mine(message))?.id ?? null;
+    },
+
+    sideLabel(role) {
+        return this.desk.sides?.[role] ?? role;
+    },
+
+    /**
+     * The thread as it is read: day headings, and bursts by one author.
+     *
+     * A name and an avatar on every line of a five-line answer is noise; the
+     * burst carries them once and the clock sits under its last line.
+     */
+    get thread() {
+        const messages = this.active?.messages ?? [];
+        const rows = [];
+        let day = null;
+        let previous = null;
+
+        messages.forEach((message, index) => {
+            if (message.day && message.day !== day) {
+                day = message.day;
+                rows.push({ type: 'day', id: `day-${message.id}`, label: day });
+                previous = null;
+            }
+
+            if (message.id === this.unreadFrom) {
+                rows.push({ type: 'unread', id: `unread-${message.id}` });
+                previous = null;
+            }
+
+            const next = messages[index + 1];
+
+            rows.push({
+                type: 'message',
+                id: message.id,
+                message,
+                // Same author, same day, and nothing in between.
+                grouped: previous?.user_id === message.user_id
+                    && previous?.role === message.role
+                    && previous?.day === message.day,
+                // The clock prints once per burst, under its last line.
+                last: !next || next.user_id !== message.user_id || next.day !== message.day,
+            });
+
+            previous = message;
+        });
+
+        return rows;
+    },
+
+    /** Newest word in a ticket, for the list on the left. */
+    preview(ticket) {
+        const message = ticket.messages?.at(-1);
+
+        if (!message) {
+            return 'Belum ada percakapan.';
+        }
+
+        return `${this.mine(message) ? 'Anda: ' : ''}${message.body}`;
+    },
+
+    previewTime(ticket) {
+        return ticket.messages?.at(-1)?.clock ?? '';
+    },
+
+    get visible() {
+        if (this.scope === 'semua') {
+            return this.tickets;
+        }
+
+        return this.tickets.filter((ticket) => (this.scope === 'riwayat'
+            ? ticket.status === 'selesai'
+            : ticket.status !== 'selesai'));
+    },
+
+    get active() {
+        return this.tickets.find((ticket) => ticket.id === this.activeId) ?? null;
+    },
+
+    get historyRows() {
+        return this.stationFilter
+            ? this.history.filter((row) => row.station_code === this.stationFilter)
+            : this.history;
+    },
+
+    init() {
+        this.$nextTick(() => this.open(this.activeId));
+    },
+
+    async open(id) {
+        this.activeId = id;
+
+        const ticket = this.active;
+
+        // Remember the boundary before the read call wipes it.
+        this.unreadFrom = ticket?.messages?.find(
+            (message) => !message.read && message.role !== this.desk.role,
+        )?.id ?? null;
+
+        this.$nextTick(() => this.scrollThread());
+
+        if (!ticket || ticket.unread === 0) {
+            return;
+        }
+
+        try {
+            const response = await postJson(`/api/maintenance/${ticket.id}/read`, {});
+            ticket.unread = 0;
+            ticket.messages.forEach((message) => { message.read = true; });
+            this.$store.site.maintenanceUnread = response.unread ?? 0;
+        } catch {
+            // Reading is a convenience; a failure here must not block the desk.
+        }
+    },
+
+    async send() {
+        const body = this.draft.trim();
+
+        if (!body || !this.active || this.sending) {
+            return;
+        }
+
+        this.sending = true;
+        this.error = null;
+
+        try {
+            const response = await postJson(`/api/maintenance/${this.active.id}/messages`, { body });
+            this.active.messages.push(response.data);
+            this.draft = '';
+            this.$nextTick(() => this.scrollThread());
+        } catch {
+            this.error = 'Pesan gagal terkirim. Coba lagi.';
+        } finally {
+            this.sending = false;
+        }
+    },
+
+    async submitRequest() {
+        if (!this.form.title.trim() || this.sending) {
+            return;
+        }
+
+        this.sending = true;
+        this.error = null;
+
+        try {
+            const response = await postJson('/api/maintenance/requests', {
+                title: this.form.title,
+                station: this.form.station || null,
+                type: this.form.type,
+                priority: this.form.priority,
+                body: this.form.body || null,
+            });
+
+            this.tickets.unshift(response.data);
+            this.form = { open: false, title: '', station: '', type: 'korektif', priority: 'normal', body: '' };
+            this.tab = 'pesan';
+            this.open(response.data.id);
+        } catch {
+            this.error = 'Permintaan gagal dikirim. Periksa isian lalu coba lagi.';
+        } finally {
+            this.sending = false;
+        }
+    },
+
+    openRequest() {
+        this.error = null;
+        this.form.open = true;
+        this.tab = 'pesan';
+
+        this.$nextTick(() => {
+            const scrim = [...document.querySelectorAll('.modal-scrim')]
+                .find((element) => (element.checkVisibility ? element.checkVisibility() : element.offsetParent !== null));
+
+            scrim?.querySelector('input:not([type=hidden]), textarea, select')?.focus();
+        });
+    },
+
+    closeRequest() {
+        this.form.open = false;
+    },
+
+    scrollThread() {
+        const box = this.$refs.thread;
+
+        if (box) {
+            box.scrollTop = box.scrollHeight;
+        }
+    },
+}));
+
+/**
+ * Accounts and roles: one list, four modals.
+ *
+ * Every write is an ordinary form post, so validation, CSRF and the redirect
+ * stay the server's job; this only decides which dialog is open and what it
+ * starts filled with. A save that comes back with errors reopens its dialog
+ * holding what was typed (`reopen`).
+ */
+Alpine.data('accessDesk', ({ users = [], roles = [], reopen = null }) => ({
+    users,
+    roles,
+    tab: reopen?.tab ?? 'pengguna',
+    modal: reopen?.modal ?? null,
+    target: reopen?.target ?? null,
+    deleteKind: null,
+    draft: {},
+    resetTimer: null,
+
+    init() {
+        this.draft = reopen
+            ? { ...this.blank(), ...(reopen.draft ?? {}) }
+            : this.blank();
+    },
+
+    blank() {
+        return {
+            name: '',
+            email: '',
+            role: this.roles[0]?.slug ?? 'operator',
+            unit: '',
+            description: '',
+            desk_side: 'operator',
+            is_active: true,
+            permissions: [],
+        };
+    },
+
+    openUser(user = null) {
+        this.target = user;
+        this.draft = user
+            ? {
+                ...this.blank(),
+                name: user.name,
+                email: user.email,
+                role: user.role,
+                unit: user.unit ?? '',
+                is_active: user.is_active,
+            }
+            : this.blank();
+
+        this.show('user');
+    },
+
+    openRole(role = null) {
+        this.target = role;
+        this.draft = role
+            ? {
+                ...this.blank(),
+                name: role.name,
+                description: role.description ?? '',
+                desk_side: role.desk_side,
+                permissions: [...(role.permissions ?? [])],
+            }
+            : this.blank();
+
+        this.show('role');
+    },
+
+    askDelete(kind, item) {
+        this.deleteKind = kind;
+        this.target = item;
+        this.show('delete');
+    },
+
+    show(modal) {
+        clearTimeout(this.resetTimer);
+        this.modal = modal;
+
+        /*
+        | The dialogs are teleported to <body>, so their refs do not reach this
+        | component: take the first field of whichever scrim is on screen. The
+        | extra frame is the transition — focus() does nothing while the card is
+        | still display:none.
+        */
+        this.$nextTick(() => requestAnimationFrame(() => {
+            const card = [...document.querySelectorAll('.modal-scrim')]
+                .find((el) => (el.checkVisibility ? el.checkVisibility() : el.offsetParent !== null));
+
+            card?.querySelector('input:not([type=hidden]), select, textarea, button[type=submit]')?.focus();
+        }));
+    },
+
+    close() {
+        this.modal = null;
+
+        /*
+        | What the dialog was showing has to survive its own leave animation.
+        | Dropping `target` now rewrites the card while it is still on screen:
+        | the titles flip to the "new" wording and the administrator's dialog
+        | grows its ability grid back, which reads as a blink on the way out.
+        */
+        clearTimeout(this.resetTimer);
+
+        this.resetTimer = setTimeout(() => {
+            if (this.modal === null) {
+                this.target = null;
+                this.deleteKind = null;
+            }
+        }, 260);
+    },
+
+    /** The administrator's abilities are set by the server, not by the form. */
+    get isAdminRole() {
+        return this.target?.slug === 'admin';
+    },
+}));
+
+Alpine.data('stationSearch', () => ({
+    query: '',
+    open: false,
+
+    get results() {
+        const query = this.query.trim().toLowerCase();
+
+        if (!query) {
+            return [];
+        }
+
+        return this.$store.site.markers
+            .filter((marker) => `${marker.name} ${marker.code} ${marker.zone ?? ''} ${marker.type_label}`
+                .toLowerCase()
+                .includes(query))
+            .slice(0, 8);
+    },
+
+    toggle() {
+        this.open = !this.open;
+
+        if (this.open) {
+            this.$nextTick(() => this.$refs.field?.focus());
+        }
+    },
+
+    close() {
+        this.open = false;
+    },
+
+    pick(marker) {
+        if (!marker) {
+            return;
+        }
+
+        this.query = '';
+        this.open = false;
+
+        if (window.location.pathname.startsWith('/digital-twin')) {
+            window.dispatchEvent(new CustomEvent('focus-station', { detail: marker.code }));
+
+            return;
+        }
+
+        window.location.href = `/digital-twin/${marker.code}`;
     },
 }));
 
@@ -624,6 +1496,83 @@ Alpine.data('thresholdForm', (metrics) => ({
 window.statusColor = statusColor;
 window.relativeTime = relativeTime;
 window.iconSvg = iconSvg;
+
+// `/` jumps to the station search unless the reader is already typing. The
+// field only exists on the digital twin, so elsewhere this finds nothing and
+// the key keeps its normal meaning.
+window.addEventListener('keydown', (event) => {
+    if (event.key !== '/' || event.metaKey || event.ctrlKey) {
+        return;
+    }
+
+    const tag = document.activeElement?.tagName;
+
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement?.isContentEditable) {
+        return;
+    }
+
+    const field = document.querySelector('[x-data="stationSearch()"] input');
+
+    if (field) {
+        event.preventDefault();
+        field.focus();
+    }
+});
 window.Alpine = Alpine;
+
+/*
+ * Navigation feedback.
+ *
+ * Every page is server rendered, so a click on the rail is followed by a wait
+ * the reader cannot see. The bar starts on the click that actually leaves the
+ * page (plain left click, no modifier, same tab) and on form submits, and it
+ * goes away with the document. `pageshow` covers coming back through the
+ * history cache, where this document is reused.
+ */
+function navigationFeedback() {
+    const bar = document.querySelector('[data-nav-progress]');
+
+    if (!bar) {
+        return;
+    }
+
+    const start = () => {
+        bar.classList.add('nav-progress--busy');
+        // Free the server for the page being asked for.
+        window.Alpine?.store('site')?.pausePolling?.();
+    };
+    const stop = () => bar.classList.remove('nav-progress--busy');
+
+    document.addEventListener('click', (event) => {
+        if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+            return;
+        }
+
+        const link = event.target.closest?.('a[href]');
+
+        if (!link || link.target === '_blank' || link.hasAttribute('download')) {
+            return;
+        }
+
+        const url = new URL(link.href, window.location.href);
+
+        // Same page, or a jump within it: nothing is being loaded.
+        if (url.origin !== window.location.origin || url.href === window.location.href) {
+            return;
+        }
+
+        start();
+    });
+
+    document.addEventListener('submit', (event) => {
+        if (!event.defaultPrevented) {
+            start();
+        }
+    });
+
+    window.addEventListener('pageshow', stop);
+}
+
+navigationFeedback();
 
 Alpine.start();

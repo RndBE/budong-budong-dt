@@ -1,14 +1,17 @@
 @php
-    $items = [
+    // `can` hides a destination the signed-in role may not open, so the rail
+    // never offers a door that answers 403.
+    $items = collect([
         ['route' => 'dashboard', 'label' => 'Dashboard', 'icon' => 'dashboard'],
-        ['route' => 'twin', 'label' => '3D Digital Twin', 'icon' => 'cube'],
-        ['route' => 'sensors', 'label' => 'Data Sensor', 'icon' => 'chart-bar'],
+        ['route' => 'twin', 'label' => 'Digital Twin', 'icon' => 'cube'],
+        ['route' => 'sensors', 'label' => 'Instrumentasi', 'icon' => 'sensor'],
         ['route' => 'analytics', 'label' => 'Analisa & Grafik', 'icon' => 'chart-line'],
-        ['route' => 'maintenance', 'label' => 'Perawatan', 'icon' => 'wrench'],
+        ['route' => 'maintenance', 'label' => 'Perawatan', 'icon' => 'wrench', 'can' => 'maintenance.view'],
         ['route' => 'alerts', 'label' => 'Peringatan', 'icon' => 'bell'],
         ['route' => 'reports', 'label' => 'Laporan', 'icon' => 'document'],
+        ['route' => 'users', 'label' => 'Pengguna & Akses', 'icon' => 'users', 'can' => 'users.manage'],
         ['route' => 'settings', 'label' => 'Pengaturan', 'icon' => 'cog'],
-    ];
+    ])->filter(fn ($item) => ! isset($item['can']) || auth()->user()?->can($item['can']));
 @endphp
 
 {{-- `compact` lives on the app frame: the rail width, the stage inset and
@@ -21,7 +24,15 @@
                 <a href="{{ route($item['route']) }}"
                    class="nav-item max-sm:min-h-11 max-sm:justify-center max-sm:px-2 {{ $active ? 'nav-item--active' : '' }}"
                    title="{{ $item['label'] }}">
-                    <x-icon :name="$item['icon']" class="size-[18px] shrink-0"/>
+                    <span class="relative shrink-0">
+                        <x-icon :name="$item['icon']" class="size-[18px]"/>
+                        @if ($item['route'] === 'maintenance')
+                            {{-- Unanswered word from the service desk. --}}
+                            <span x-show="$store.site.maintenanceUnread > 0" x-cloak
+                                  class="absolute -right-1.5 -top-1.5 grid min-w-4 place-items-center rounded-full bg-state-bahaya px-1 text-[9px] font-bold text-white"
+                                  x-text="$store.site.maintenanceUnread"></span>
+                        @endif
+                    </span>
                     <span x-show="!compact" x-cloak class="truncate max-[1439px]:hidden">{{ $item['label'] }}</span>
                 </a>
             </li>

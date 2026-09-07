@@ -4,10 +4,13 @@ namespace App\Services;
 
 use App\Models\Alert;
 use App\Models\Dam;
+use App\Models\MaintenanceMessage;
 use App\Models\MaintenanceTask;
 use App\Models\SensorMetric;
 use App\Models\SensorReading;
 use App\Models\SensorStation;
+use App\Models\Setting;
+use App\Models\User;
 use App\Services\Telemetry\TelemetryProvider;
 use App\Services\Weather\WeatherProvider;
 use App\Support\SolarClock;
@@ -114,6 +117,8 @@ class MonitoringService
                 'phases' => $this->basePhases($base),
             ] : null,
             'default_zoom' => (int) config('dam.stage.default_zoom', 45),
+            'drift_arc' => (float) config('dam.stage.drift_arc', 55),
+            'default_bearing' => (float) config('dam.stage.default_bearing', 0),
             'default_pitch' => (float) config('dam.stage.default_pitch', 0),
         ];
     }
@@ -394,6 +399,222 @@ class MonitoringService
                     'scheduled_for' => $task->scheduled_for->format('d M Y'),
                     'assignee' => $task->assignee,
                 ])->all(),
+        ];
+    }
+
+    /* ------------------------------------------------------------------ *
+     |  Maintenance desk
+     * ------------------------------------------------------------------ */
+
+    /**
+     * Every job with its conversation, newest activity first.
+     *
+     * One list serves both sides of the desk: the control room sees what it
+     * asked for and what came back, the service desk sees the queue.
+     */
+    public function maintenanceTickets(string $scope = 'aktif', string $side = 'operator'): array
+    {
+        $tasks = MaintenanceTask::query()
+            ->where('dam_id', $this->dam()->id)
+            ->when($scope === 'aktif', fn ($query) => $query->where('status', '!=', 'selesai'))
+            ->when($scope === 'riwayat', fn ($query) => $query->where('status', 'selesai'))
+            ->with(['station:id,code,name,short_name', 'messages.author:id,name,role', 'requester:id,name'])
+            ->orderByRaw('COALESCE(last_message_at, updated_at) desc')
+            ->get();
+
+        return $tasks->map(fn (MaintenanceTask $task) => $this->ticketPayload($task, $side))->all();
+    }
+
+    /** Messages the other side has not opened yet, per role. */
+    public function maintenanceUnread(string $role = 'operator'): int
+    {
+        $from = $this->otherSide($role);
+
+        return MaintenanceMessage::query()
+            ->whereNull('read_at')
+            ->where('author_role', $from)
+            ->whereHas('task', fn ($query) => $query->where('dam_id', $this->dam()->id))
+            ->count();
+    }
+
+    /** Open a job from a request made in the control room. */
+    public function openMaintenanceRequest(User $user, array $data): array
+    {
+        $station = isset($data['station'])
+            ? SensorStation::query()->where('dam_id', $this->dam()->id)->where('code', $data['station'])->first()
+            : null;
+
+        $task = MaintenanceTask::query()->create([
+            'dam_id' => $this->dam()->id,
+            'sensor_station_id' => $station?->id,
+            'title' => $data['title'],
+            'type' => $data['type'] ?? 'korektif',
+            'source' => 'permintaan',
+            'status' => 'terjadwal',
+            'priority' => $data['priority'] ?? 'normal',
+            'requested_by' => $user->id,
+            'scheduled_for' => $data['scheduled_for'] ?? now($this->dam()->timezone)->toDateString(),
+            'notes' => $data['body'] ?? null,
+        ]);
+
+        if (! empty($data['body'])) {
+            $this->postMaintenanceMessage($task, $user, $data['body']);
+
+            return $this->ticketPayload($task->fresh(['station', 'messages.author', 'requester']), $user->deskSide());
+        }
+
+        return $this->ticketPayload($task->fresh(['station', 'messages.author', 'requester']), $user->deskSide());
+    }
+
+    /** Add a line to the conversation; the author's role decides the side. */
+    public function postMaintenanceMessage(MaintenanceTask $task, User $user, string $body): array
+    {
+        $role = $user->deskSide();
+
+        $message = $task->messages()->create([
+            'user_id' => $user->id,
+            'author_name' => $user->name,
+            'author_role' => $role,
+            'body' => $body,
+        ]);
+
+        $task->forceFill(['last_message_at' => $message->created_at])->save();
+
+        return $this->messagePayload($message->fresh('author'));
+    }
+
+    /** Mark what the other side wrote as seen. */
+    public function readMaintenanceThread(MaintenanceTask $task, User $user): int
+    {
+        $from = $this->otherSide($user->deskSide());
+
+        return $task->messages()
+            ->whereNull('read_at')
+            ->where('author_role', $from)
+            ->update(['read_at' => now()]);
+    }
+
+    /**
+     * Everything already done, per asset.
+     *
+     * This is the log an auditor asks for: which instrument, what was done,
+     * when it finished and who did it.
+     */
+    public function maintenanceHistory(?string $stationCode = null, int $limit = 60): array
+    {
+        return MaintenanceTask::query()
+            ->where('dam_id', $this->dam()->id)
+            ->where('status', 'selesai')
+            ->when($stationCode, fn ($query) => $query->whereHas(
+                'station',
+                fn ($inner) => $inner->where('code', $stationCode)
+            ))
+            ->with(['station:id,code,name,short_name'])
+            ->withCount('messages')
+            ->orderByDesc('completed_at')
+            ->limit($limit)
+            ->get()
+            ->map(fn (MaintenanceTask $task) => [
+                'id' => $task->id,
+                'title' => $task->title,
+                'type' => $task->type,
+                'type_label' => $this->maintenanceTypeLabel($task->type),
+                'station' => $task->station?->short_name ?? $task->station?->name,
+                'station_code' => $task->station?->code,
+                'assignee' => $task->assignee,
+                'notes' => $task->notes,
+                'messages' => $task->messages_count,
+                'completed_at' => $this->stamp($task->completed_at),
+                'scheduled_for' => $task->scheduled_for?->format('d M Y'),
+            ])
+            ->all();
+    }
+
+    /** @return array<string, mixed> */
+    private function ticketPayload(MaintenanceTask $task, string $side = 'operator'): array
+    {
+        return [
+            'id' => $task->id,
+            'title' => $task->title,
+            'status' => $task->status,
+            'priority' => $task->priority,
+            'type' => $task->type,
+            'type_label' => $this->maintenanceTypeLabel($task->type),
+            'source' => $task->source,
+            'assignee' => $task->assignee,
+            'requester' => $task->requester?->name,
+            'requester_id' => $task->requested_by,
+            'station' => $task->station?->short_name ?? $task->station?->name,
+            'station_code' => $task->station?->code,
+            'scheduled_for' => $task->scheduled_for?->format('d M Y'),
+            'completed_at' => $this->stamp($task->completed_at),
+            'unread' => $task->messages->whereNull('read_at')->where('author_role', $this->otherSide($side))->count(),
+            'messages' => $task->messages->map(fn (MaintenanceMessage $message) => $this->messagePayload($message))->values()->all(),
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function messagePayload(MaintenanceMessage $message): array
+    {
+        $at = $message->created_at?->copy()->setTimezone($this->dam()->timezone);
+
+        return [
+            'id' => $message->id,
+            'body' => $message->body,
+            'role' => $message->author_role,
+            // The reader compares this with their own id: alignment follows the
+            // person, the colour follows the side of the desk.
+            'user_id' => $message->user_id,
+            'author' => $message->author_name,
+            'at' => $at?->format('d M Y H:i'),
+            // Split out so the thread can group by day and print the clock
+            // alone under a burst of messages.
+            'day' => $at?->translatedFormat('d M Y'),
+            'clock' => $at?->format('H:i'),
+            'relative' => $at?->diffForHumans(),
+            'read' => $message->read_at !== null,
+        ];
+    }
+
+    /** A moment in the dam's own clock, spelled out for a log line. */
+    private function stamp(?CarbonInterface $moment): ?string
+    {
+        return $moment?->copy()->setTimezone($this->dam()->timezone)->format('d M Y H:i');
+    }
+
+    private function maintenanceTypeLabel(string $type): string
+    {
+        return [
+            'preventif' => 'Preventif',
+            'korektif' => 'Korektif',
+            'kalibrasi' => 'Kalibrasi',
+            'inspeksi' => 'Inspeksi',
+        ][$type] ?? ucfirst($type);
+    }
+
+    /** The desk has two sides; this is the one a reader is not on. */
+    public function otherSide(string $side): string
+    {
+        return $side === 'operator' ? 'cs' : 'operator';
+    }
+
+    /**
+     * Shared bootstrap payload handed to Alpine on every page.
+     *
+     * The unread badge counts from the reader's own side of the desk, so the
+     * service desk is not shown the control room's tally.
+     */
+    public function bootPayload(?User $user = null): array
+    {
+        return [
+            'environment' => $this->environment(),
+            'markers' => $this->markers(),
+            'map' => config('dam.map'),
+            'refresh' => config('dam.refresh'),
+            'statuses' => config('dam.statuses'),
+            'skin' => Setting::get('map_skin', 'auto'),
+            'maintenance_unread' => $this->maintenanceUnread($user?->deskSide() ?? 'operator'),
+            'can' => $user ? array_values($user->permissions()) : [],
         ];
     }
 

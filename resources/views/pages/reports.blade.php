@@ -6,6 +6,7 @@
     <x-page-shell title="Laporan Monitoring"
                   subtitle="Bangkitkan laporan periodik dalam format PDF atau CSV data mentah.">
 
+        @can('reports.create')
         <div class="glass glass--panel p-4" x-sheen x-data="reportForm()">
             <h2 class="mb-3 text-[14px] font-semibold text-white">Buat Laporan</h2>
 
@@ -73,13 +74,14 @@
                 </p>
             </div>
         </div>
+        @endcan
 
         <div class="glass glass--panel mt-3.5 overflow-hidden pb-2" x-sheen>
             <div class="border-b border-white/10 px-4 py-3">
                 <h2 class="text-[14px] font-semibold text-white">Riwayat Laporan</h2>
             </div>
 
-            <div class="table-scroll">
+            <div class="table-scroll max-sm:hidden">
             <table class="w-full border-collapse text-left">
                 <thead>
                     <tr class="bg-white/4 text-[10.5px] tracking-wide text-mist-300 uppercase">
@@ -119,6 +121,32 @@
                 </tbody>
             </table>
             </div>
+
+            {{-- Same rows as cards below sm. --}}
+            <ul class="space-y-2.5 p-3 sm:hidden">
+                @forelse ($reports as $report)
+                    <li class="glass glass--inset p-3">
+                        <p class="text-[12.5px] font-semibold text-white">{{ $report->title }}</p>
+                        <p class="tnum mt-0.5 text-[11px] text-mist-300">
+                            {{ $report->period_start->translatedFormat('d M Y') }} –
+                            {{ $report->period_end->translatedFormat('d M Y') }}
+                        </p>
+                        <p class="tnum mt-0.5 text-[10.5px] text-mist-400">
+                            Dibuat {{ $report->created_at->translatedFormat('d M Y H:i') }}
+                            · {{ strtoupper($report->format) }}
+                        </p>
+
+                        <a href="{{ route('api.reports.download', $report) }}"
+                           class="glass glass--chip glass-button mt-2.5 min-h-10 w-full text-[12px] font-semibold">
+                            <x-icon name="download" class="size-4"/> Unduh
+                        </a>
+                    </li>
+                @empty
+                    <li class="px-3 py-8 text-center text-[12px] text-mist-400">
+                        Belum ada laporan yang dibuat.
+                    </li>
+                @endforelse
+            </ul>
         </div>
     </x-page-shell>
 @endsection

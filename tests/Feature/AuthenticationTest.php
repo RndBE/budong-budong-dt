@@ -26,7 +26,7 @@ class AuthenticationTest extends TestCase
         $this->get('/login')
             ->assertOk()
             ->assertSee('Bendungan Budong Budong', escape: false)
-            ->assertSee('assets/map/map-', escape: false);
+            ->assertSee('assets/panorama/preview/base-dam-', escape: false);
     }
 
     public function test_an_operator_can_sign_in_and_lands_on_the_map(): void

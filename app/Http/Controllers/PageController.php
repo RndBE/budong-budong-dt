@@ -66,6 +66,10 @@ class PageController extends Controller
             'boot' => $this->boot(),
             'stations' => $type ? array_values(array_filter($stations, fn ($s) => $s['type'] === $type)) : $stations,
             'types' => collect($stations)->pluck('type_label', 'type')->sort()->all(),
+            // The menu shows how many stations each type holds, counted before
+            // the filter narrows the list.
+            'typeCounts' => collect($stations)->countBy('type')->all(),
+            'totalStations' => count($stations),
             'activeType' => $type,
         ]);
     }
@@ -91,8 +95,10 @@ class PageController extends Controller
         ]);
     }
 
-    public function maintenance(): View
+    public function maintenance(Request $request): View
     {
+        $side = $request->user()?->deskSide() ?? 'operator';
+
         $tasks = MaintenanceTask::query()
             ->where('dam_id', $this->monitoring->dam()->id)
             ->with('station:id,code,name')
@@ -103,6 +109,24 @@ class PageController extends Controller
             'boot' => $this->boot(),
             'tasks' => $tasks,
             'columns' => ['terjadwal' => 'Terjadwal', 'berjalan' => 'Berjalan', 'tertunda' => 'Tertunda', 'selesai' => 'Selesai'],
+            'tickets' => $this->monitoring->maintenanceTickets('semua', $side),
+            'history' => $this->monitoring->maintenanceHistory(),
+            'desk' => [
+                'role' => $side,
+                'role_label' => $request->user()?->roleLabel(),
+                'side_label' => $request->user()?->sideLabel(),
+                'other_label' => config('access.sides')[$this->monitoring->otherSide($side)],
+                'sides' => config('access.sides'),
+                'user_id' => $request->user()?->id,
+                'name' => $request->user()?->name,
+                'unread' => $this->monitoring->maintenanceUnread($side),
+                'stations' => $this->monitoring->markers(),
+                'can' => [
+                    'request' => (bool) $request->user()?->can('maintenance.request'),
+                    'reply' => (bool) $request->user()?->can('maintenance.reply'),
+                    'status' => (bool) $request->user()?->can('maintenance.status'),
+                ],
+            ],
         ]);
     }
 
@@ -160,13 +184,6 @@ class PageController extends Controller
     /** Shared bootstrap payload handed to Alpine on every page. */
     private function boot(): array
     {
-        return [
-            'environment' => $this->monitoring->environment(),
-            'markers' => $this->monitoring->markers(),
-            'map' => config('dam.map'),
-            'refresh' => config('dam.refresh'),
-            'statuses' => config('dam.statuses'),
-            'skin' => Setting::get('map_skin', 'auto'),
-        ];
+        return $this->monitoring->bootPayload(auth()->user());
     }
 }

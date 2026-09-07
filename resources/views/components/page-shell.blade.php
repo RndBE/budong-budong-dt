@@ -3,18 +3,20 @@
 {{-- Shared layout for the non-map pages: dimmed live backdrop + scrolling content. --}}
 <div class="absolute inset-0">
 
-    {{-- The same time-of-day render as the map, pushed back so text stays readable. --}}
+    {{-- The dam's own 360 panorama, drifting sideways like the stage does, in
+         the time of day the sun is actually at. Two layers so a phase change
+         cross-fades instead of blinking. --}}
     <div class="absolute inset-0 overflow-hidden">
-        <div class="stage-layer scale-105 transition-[filter] duration-1000"
+        <div class="backdrop-pan transition-[filter] duration-1000"
              :style="{
-                 backgroundImage: `url('${$store.site.scene.primary}')`,
+                 backgroundImage: `url('${$store.site.backdrop.primary}')`,
                  filter: $store.site.stageFilter + ' blur(2px)',
              }"></div>
-        <div class="stage-layer scale-105 transition-opacity duration-1000"
+        <div class="backdrop-pan transition-opacity duration-1000"
              :style="{
-                 backgroundImage: `url('${$store.site.scene.secondary}')`,
+                 backgroundImage: `url('${$store.site.backdrop.secondary}')`,
                  filter: $store.site.stageFilter + ' blur(2px)',
-                 opacity: $store.site.scene.mix,
+                 opacity: $store.site.backdrop.mix,
              }"></div>
         <div class="absolute inset-0"
              style="background:
