@@ -14,6 +14,7 @@ use Database\Seeders\DamSeeder;
 use Database\Seeders\RoleSeeder;
 use Database\Seeders\StationSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Arr;
 use Tests\TestCase;
 
 class MonitoringApiTest extends TestCase
@@ -524,6 +525,58 @@ class MonitoringApiTest extends TestCase
 
         $this->assertGreaterThan(0, $checkedPins, 'Tidak ada penanda stasiun yang terperiksa.');
         $this->assertGreaterThan(0, $checkedPlaces, 'Tidak ada nudge patok yang terperiksa.');
+    }
+
+    /**
+     * `placements:import` is the way placement reaches rows that already exist.
+     *
+     * The seeder walks past them on purpose, which is right until the rows on
+     * the target were never placed at all — a marker seeded there months ago
+     * on the catalogue's estimate is not work anybody did, and the placement
+     * being pushed is. So this direction exists, it says what it is about to
+     * overwrite, and it does nothing without `--force` or an answered prompt.
+     */
+    public function test_importing_placements_moves_rows_that_are_already_there(): void
+    {
+        $file = database_path('seeders/data/placements.php');
+
+        if (! is_file($file)) {
+            $this->markTestSkipped('Belum ada berkas penempatan yang diekspor.');
+        }
+
+        $placements = (array) require $file;
+        $monitoring = app(MonitoringService::class);
+
+        // A target seeded long ago: the rows exist, on angles nobody placed.
+        $plot = PanoramaHotspot::query()
+            ->whereHas('station', fn ($query) => $query->where('code', 'adr-02'))
+            ->where('type', 'plot')
+            ->firstOrFail();
+
+        $monitoring->moveStationSphere('cctv-01', 3.5, -1.25);
+        $monitoring->moveHotspot($plot->id, 99.0, 44.0);
+        $plot->forceFill(['meta' => Arr::except($plot->meta ?? [], ['places'])])->save();
+
+        $wanted = $placements['adr-02']['hotspots'][$plot->label];
+
+        // A dry run reports and writes nothing.
+        $this->artisan('placements:import --dry-run')->assertSuccessful();
+        $this->assertEqualsWithDelta(99.0, $plot->fresh()->yaw, 0.001, 'Dry run menulis.');
+
+        $this->artisan('placements:import --force')->assertSuccessful();
+
+        $after = $plot->fresh();
+        $pin = SensorStation::query()->where('code', 'cctv-01')->firstOrFail();
+
+        $this->assertEqualsWithDelta($wanted['yaw'], $after->yaw, 0.001);
+        $this->assertEqualsWithDelta($wanted['pitch'], $after->pitch, 0.001);
+        $this->assertSame($wanted['places'] ?? null, $after->meta['places'] ?? null);
+        $this->assertEqualsWithDelta($placements['cctv-01']['sphere']['yaw'], $pin->sphere_yaw, 0.001);
+
+        // Run twice and it has nothing left to say.
+        $this->artisan('placements:import --force')
+            ->expectsOutputToContain('Tidak ada yang diubah')
+            ->assertSuccessful();
     }
 
     /**

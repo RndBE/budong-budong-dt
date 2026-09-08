@@ -297,6 +297,14 @@ records conventions that are easy to break.
   hotspot `label`: renaming either retires the old row and creates a new one,
   so the new one takes the *file's* angles, not the target's. Anything placed
   on the target under the old name has to be placed again.
+- `placements:import` is the other direction, for the case the create-only rule
+  cannot reach: the rows are already on the target, but on the catalogue's
+  estimate rather than on anything a person placed. It overwrites, so it prints
+  every marker it is about to move, does nothing without `--force` or an
+  answered prompt, takes `--dry-run`, and narrows to one panorama with
+  `--station=`. Never wire it into a deploy script — the seeder's silence about
+  existing rows is what protects an afternoon of placing, and this command is
+  the deliberate exception, run by somebody who knows which side is right.
 - The catalogue is authoritative for *stations* too: a station whose code
   `StationSeeder` no longer lists is deleted, and its readings, metrics and
   hotspots cascade with it while alerts and maintenance jobs keep their history
