@@ -18,6 +18,9 @@
                  filter: $store.site.stageFilter + ' blur(2px)',
                  opacity: $store.site.backdrop.mix,
              }"></div>
+        {{-- Cloud and rain, before the dimming gradient. --}}
+        @include('partials.sky-layers')
+
         <div class="absolute inset-0"
              style="background:
                 linear-gradient(180deg, rgba(3,11,20,.82) 0%, rgba(3,11,20,.66) 40%, rgba(3,11,20,.86) 100%)">

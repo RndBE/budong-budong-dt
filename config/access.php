@@ -53,6 +53,14 @@ return [
                 'label' => 'Geser penanda stasiun',
                 'hint' => 'Menyimpan posisi penanda di peta dan panorama 360.',
             ],
+            'dashboard.arrange' => [
+                'label' => 'Atur tata letak dashboard',
+                'hint' => 'Mengurutkan, melebarkan dan menyembunyikan kartu untuk semua orang.',
+            ],
+            'gates.control' => [
+                'label' => 'Atur bukaan pintu spillway',
+                'hint' => 'Memberi perintah bukaan pada tiap daun pintu.',
+            ],
             'thresholds.edit' => [
                 'label' => 'Ubah ambang batas',
                 'hint' => 'Menyetel batas waspada, siaga, dan bahaya.',

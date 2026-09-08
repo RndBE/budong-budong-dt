@@ -112,7 +112,7 @@
                                             <x-icon name="eye" class="size-3.5"/> 360°
                                         </a>
                                     @endif
-                                    <a href="{{ route('analytics') }}?stasiun={{ $station['code'] }}"
+                                    <a href="{{ route('analytics') }}?stasiun={{ $station['code'] }}&tampilan=grafik"
                                        class="glass glass--chip glass-button px-3 py-1.5 text-[11.5px] font-semibold">
                                         <x-icon name="chart-line" class="size-3.5"/> Grafik
                                     </a>
@@ -164,7 +164,7 @@
                                     <x-icon name="eye" class="size-3.5"/> 360°
                                 </a>
                             @endif
-                            <a href="{{ route('analytics') }}?stasiun={{ $station['code'] }}"
+                            <a href="{{ route('analytics') }}?stasiun={{ $station['code'] }}&tampilan=grafik"
                                class="glass glass--chip glass-button px-3.5 py-2.5 text-[11.5px] font-semibold"
                                aria-label="Lihat grafik {{ $station['name'] }}">
                                 <x-icon name="chart-line" class="size-3.5"/> Grafik

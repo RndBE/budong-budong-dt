@@ -76,6 +76,9 @@ Route::middleware('auth')->group(function () {
         Route::get('/stations/{code}/series/{metric}', [StationController::class, 'series'])->name('stations.series');
         Route::post('/stations/{code}/position', [StationController::class, 'move'])->middleware('can:stations.move')->name('stations.move');
         Route::post('/stations/{code}/sphere', [StationController::class, 'sphere'])->middleware('can:stations.move')->name('stations.sphere');
+        Route::post('/stations/{code}/gates/{gate}', [StationController::class, 'gate'])->middleware('can:gates.control')->whereNumber('gate')->name('stations.gate');
+        Route::post('/hotspots/{hotspot}/position', [StationController::class, 'hotspot'])->middleware('can:stations.move')->whereNumber('hotspot')->name('hotspots.move');
+        Route::post('/hotspots/{hotspot}/stakes/{stake}', [StationController::class, 'stake'])->middleware('can:stations.move')->whereNumber(['hotspot', 'stake'])->name('hotspots.stake');
         Route::get('/alerts', [AlertController::class, 'index'])->name('alerts.index');
         Route::post('/alerts/{alert}/acknowledge', [AlertController::class, 'acknowledge'])->middleware('can:alerts.handle')->name('alerts.acknowledge');
         Route::post('/alerts/{alert}/resolve', [AlertController::class, 'resolve'])->middleware('can:alerts.handle')->name('alerts.resolve');
@@ -91,5 +94,6 @@ Route::middleware('auth')->group(function () {
         Route::get('/reports/{report}/download', [ReportController::class, 'download'])->name('reports.download');
         Route::get('/settings', [SettingController::class, 'index'])->name('settings.index');
         Route::post('/settings', [SettingController::class, 'store'])->middleware('can:thresholds.edit')->name('settings.store');
+        Route::post('/dashboard/layout', [SettingController::class, 'dashboard'])->middleware('can:dashboard.arrange')->name('dashboard.layout');
     });
 });

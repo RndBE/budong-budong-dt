@@ -5,7 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>@yield('title', 'Digital Twin') · Bendungan Budong Budong</title>
-    <link rel="icon" href="{{ asset('assets/icon/favicon.svg') }}" type="image/svg+xml">
+    {{-- The ministry logo, scaled by `tools/build_favicon.py`. Not the
+         598px original: sixty-five kilobytes for something drawn at sixteen
+         pixels, paid on every page load. --}}
+    <link rel="icon" href="{{ asset('assets/icon/logopu-32.png') }}" type="image/png" sizes="32x32">
+    <link rel="apple-touch-icon" href="{{ asset('assets/icon/logopu-180.png') }}" sizes="180x180">
 
     {{-- Build the next page while the pointer is still on its way to the link.
          Prerender, not prefetch: these pages answer `Cache-Control: no-cache`,
@@ -135,21 +139,6 @@
             @click="panelOpen = !panelOpen">
         <x-icon name="chart-bar" class="size-[18px]" x-show="!panelOpen"/>
         <x-icon name="x" class="size-[18px]" x-show="panelOpen" x-cloak/>
-    </button>
-    @endif
-
-    {{-- Desktop handle for folding the summary panel away. Only the digital
-         twin has a stage that gains anything from the extra width. --}}
-    @if ($panelFoldable)
-    <button type="button"
-            class="chrome-scale chrome-slide glass glass--chip glass-button pointer-events-auto absolute z-40 hidden h-16 w-7 -translate-y-1/2 xl:grid"
-            style="right: calc(var(--panel-w) + var(--gap) * 1.7); top: 50%"
-            :title="panelCollapsed ? 'Tampilkan panel data' : 'Sembunyikan panel data'"
-            :aria-label="panelCollapsed ? 'Tampilkan panel data' : 'Sembunyikan panel data'"
-            :aria-expanded="!panelCollapsed"
-            @click="togglePanel()">
-        <x-icon name="chevrons-right" class="size-4 transition"
-                ::class="panelCollapsed ? 'rotate-180' : ''"/>
     </button>
     @endif
 

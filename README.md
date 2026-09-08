@@ -16,7 +16,7 @@ panorama dengan Photo Sphere Viewer, dan grafik dengan ECharts.
 | **3D Digital Twin** (`/digital-twin`) | Panggung utama: panorama 360° tubuh bendungan (`Panoramic_Base Dam`) yang bisa diputar/di-zoom, 15 penanda stasiun berwarna status di dalam bola panorama, pencarian lokasi, dan panel ringkasan di kanan. Klik penanda → panorama stasiun itu. |
 | **Viewer 360°** (`/digital-twin/{kode}`) | Panorama drone per stasiun, hotspot yang menampilkan bacaan sensor, tautan antar panorama, dan panel kanan berisi detail stasiun (grafik, ambang batas, riwayat peringatan & perawatan). Bar kiri tetap sama. |
 | **Dashboard** (`/dashboard`) | KPI utama, tren muka air/debit, status seluruh stasiun, peringatan, dan perawatan mendatang. |
-| **Data Instrumentasi** (`/sensor`) | Tabel 16 stasiun + filter tipe, pintasan ke 360° dan grafik. |
+| **Data Instrumentasi** (`/sensor`) | Tabel 17 stasiun + filter tipe, pintasan ke 360° dan grafik. |
 | **Analisa & Grafik** (`/analisa`) | Grafik per parameter dengan garis ambang batas, rentang 24 jam / 7 hari / 30 hari, dan statistik ringkas. |
 | **Perawatan** (`/perawatan`) | Papan kanban preventif/korektif/kalibrasi; status bisa dipindah langsung. |
 | **Peringatan** (`/peringatan`) | Riwayat pelampauan ambang; bisa ditinjau dan diselesaikan. |
@@ -34,6 +34,33 @@ koordinat bendungan (−1,9536, 119,3411 — Asia/Makassar). Hasilnya dipakai un
 
 Semua nilai tersedia di `GET /api/environment`. Fase bisa dikunci manual di
 halaman Pengaturan (tersimpan di tabel `settings`).
+
+### Skenario langit: mendung dan rintik hujan
+
+Tutupan awan tidak punya sensor, tapi punya bekas: pada ketinggian matahari
+tertentu langit cerah menghasilkan cahaya sebesar tertentu, jadi **iluminasi
+yang jauh di bawah angka itu berarti awan**. Dipasangkan dengan penakar hujan,
+keduanya memisahkan kejadian yang penting bagi operator:
+
+| Iluminasi | Hujan | Dibaca sebagai |
+|---|---|---|
+| ± sesuai perkiraan | kering | Cerah |
+| turun 25–55% | kering | Berawan |
+| turun > 55% | kering | **Mendung** |
+| turun | 0,1–12 mm/jam | **Rintik hujan** |
+| apa pun | > 12 mm/jam | Hujan |
+| matahari di bawah ufuk | kering | Malam (awan tidak ditebak) |
+
+Panggung menggambarkannya: cahaya dan warna dikurangi lewat *grading*, sisa
+kelabunya dilapis satu selubung, dan hujan digambar dua lapis garis dengan
+kecepatan berbeda supaya terasa berjarak. Setiap keadaan membawa satu kalimat
+alasan, mis. *"Iluminasi 12.000 lux dari perkiraan langit cerah 96.000 lux
+(turun 87%), sementara hujan 3,5 mm/jam dan 22 mm dalam 24 jam."*
+
+Untuk **uji skenario (what-if)**, panel jam di panggung punya baris **Skenario
+langit**: `Otomatis` mengikuti sensor, sisanya (`Cerah`, `Berawan`, `Mendung`,
+`Rintik`, `Hujan`) memaksa tampilan dan diberi label **simulasi** — angka
+sensornya tidak diubah sama sekali.
 
 ### Kontrol waktu panggung
 
@@ -281,6 +308,63 @@ tersebut lengkap dengan hotspotnya; tombol **Kembali ke panorama utama**
 mengembalikannya. Tidak ada viewer kedua, jadi hanya satu konteks WebGL yang
 hidup.
 
+Di dalam panorama stasiun, hotspot tidak hanya menandai alatnya. **ADR-02**
+(robotic total station kiri) juga menandai **patok geser** — prisma reflektor
+yang dibidik alat itu. Hanya ADR-02: kedua ADR membidik tubuh bendungan yang
+sama, dan menggambar dua set patok di atas satu struktur menghasilkan gambar
+yang tidak terbaca. Susunannya mengikuti bendungannya, bukan bidang gambar:
+**tiga garis** melangkah menjauh dari puncak di tiap lereng (hulu dan hilir),
+dan tiap garis berisi **lima patok** yang berbaris **searah tubuh bendungan**
+— jadi 3 × 5 patok per lereng. **Tiap patok punya petaknya sendiri**, dengan
+patoknya berdiri di tengah petak itu, dan petak yang lebih jauh digambar lebih
+kecil serta lebih rapat sesuai perspektifnya.
+
+Petaknya digambar sebagai kotak garis putus-putus yang **ikut menempel di
+lereng** (poligon berkoordinat bola, jadi perspektifnya benar), sementara
+patoknya digambar sebagai tanda sasaran survei — belah ketupat putih bergaris
+gelap dengan titik di tengahnya. Patok itu tandanya, bukan bendanya: patok
+asli tingginya sekitar satu meter pada jarak bidik 130 m — sepertiga derajat,
+tidak akan kelihatan kalau digambar seukuran aslinya — jadi tandanya dibuat
+tetap seukuran layar sementara petaknya ikut membesar saat di-zoom. Arahkan
+kursor ke satu patok untuk melihat kodenya (`PG-HU2-3`).
+
+Di bawah tiap patok tercetak **pergeseran liniernya dalam mm**, diwarnai
+menurut statusnya — muncul begitu panggung di-zoom cukup dekat (dan selalu
+muncul untuk patok yang sedang disentuh kursor), karena pada zoom paling lebar
+patok terjauh dalam satu garis hanya berjarak sepuluh piksel dan angkanya
+akan saling tumpuk. Klik satu patok dan panel kiri bawah menampilkan angka
+besarnya beserta rincian komponen horizontal dan vertikalnya. Tombol
+**arah pergeseran** (ikon deformasi di kluster kanan bawah, atau tombol di
+panel itu) menggambar panah dari tiap patok ke arah geserannya, panjangnya
+sebanding dengan besar pergeseran — skalanya, 10 px per mm, dicetak di bawah
+panggung supaya panahnya bisa dibaca, bukan hanya dilihat.
+
+Dua catatan soal angka itu. Yang diukur alat adalah tubuh bendungan
+(`displacement_h` dan `displacement_v`), dan nilai per patok adalah
+**sebaran** pergeseran itu di sepanjang satu elevasi — porsinya diturunkan
+dari kode patoknya sendiri, jadi polanya tetap, tidak berubah setiap
+penyegaran. Lalu "arah" yang ditampilkan adalah sudut **pada gambar**
+(0° = ke kanan, 90° = ke bawah), bukan azimut hasil survei; panelnya menyebut
+itu "Arah gambar".
+
+Sudut penanda maupun hotspot bisa **digeser sendiri**: tombol penanda di
+kluster kanan bawah menyalakan mode atur posisi, dan mode itu berlaku di kedua
+tampilan — di panorama dasar yang digeser adalah penanda stasiun, di dalam
+panorama stasiun yang digeser adalah hotspotnya (garis patok, alat, atau
+tautan).
+
+Untuk garis patok ada dua cara geser: seret **namanya** dan seluruh garis
+pindah sebagai satu kesatuan (kelima petak ikut, karena semuanya diturunkan
+dari titik tengah garis), atau seret **satu patoknya** dan hanya patok itu
+yang bergeser. Yang tersimpan untuk patok tunggal adalah **selisihnya** dari
+tempat yang dihitung garis, jadi kalau garisnya digeser lagi, koreksi tiap
+patok ikut terbawa. Setiap lepasan langsung tersimpan — tapi hanya kalau
+pointer benar-benar digeser, sebab satu klik tidak boleh memindahkan data
+survei. Rendernya tidak disurvei, jadi
+sudut awal hasil seeder memang perkiraan dari gambarnya; mengoreksinya dari
+panggung adalah satu-satunya cara yang jujur. Hak akses `stations.move` yang
+menentukan siapa boleh.
+
 Panggungnya tidak pernah benar-benar diam: panorama **berputar pelan sendiri**
 (0,11 rpm) sampai disentuh, lalu melanjutkan hanyutannya 4 detik setelah tangan
 dilepas — tombol putar di kluster kanan bawah mematikannya. Tiap penanda juga
@@ -376,6 +460,9 @@ php artisan migrate --seed
 
 > Untuk mencoba tanpa MySQL: `DB_CONNECTION=sqlite` dan
 > `touch database/database.sqlite` — seluruh migration dan seeder kompatibel.
+> Perhatikan: pada koneksi `sqlite`, nilai `DB_DATABASE` dibaca sebagai **nama
+> berkas**, bukan nama skema. Jadi `DB_DATABASE=budong_budong_dt` membuat berkas
+> `budong_budong_dt` di akar proyek — bukan memakai database MySQL bernama sama.
 
 ### Jalankan aplikasi
 
@@ -557,6 +644,7 @@ perintah simulator, atau kiriman perangkat.
 ```bash
 php artisan telemetry:simulate            # lanjutkan data sampai waktu sekarang
 php artisan telemetry:simulate --hours=48 # isi ulang 48 jam ke belakang
+php artisan placements:export             # simpan posisi penanda & patok ke seeder
 ```
 
 Perintah ini terjadwal tiap 5 menit di `routes/console.php`; hapus jadwalnya
@@ -609,13 +697,14 @@ Semua di bawah sesi login (`/api/...`):
 | GET | `/api/environment/curve?step=10` | kurva pencahayaan sehari untuk kontrol waktu |
 | POST | `/api/stations/{kode}/position` | simpan koordinat peta penanda hasil geser |
 | POST | `/api/stations/{kode}/sphere` | simpan sudut penanda di dalam panorama dasar |
+| POST | `/api/hotspots/{id}/position` | simpan sudut hotspot di dalam panorama stasiun |
 | GET/POST | `/api/alerts`, `/api/alerts/{id}/acknowledge\|resolve` | peringatan |
 | GET/POST | `/api/maintenance`, `/api/maintenance/{id}/status` | perawatan |
 | GET/POST | `/api/reports`, `/api/reports/{id}/download` | laporan |
 | GET/POST | `/api/settings` | preferensi tampilan & ambang batas |
 
-Endpoint yang menulis dijaga hak akses: `stations.move` untuk kedua endpoint
-posisi penanda, `alerts.handle` untuk peringatan, `maintenance.*` untuk desk
+Endpoint yang menulis dijaga hak akses: `stations.move` untuk ketiga endpoint
+posisi penanda dan hotspot, `alerts.handle` untuk peringatan, `maintenance.*` untuk desk
 perawatan, `reports.create` untuk laporan, dan `thresholds.edit` untuk
 `POST /api/settings`. Peran tanpa hak itu menerima 403.
 
@@ -628,14 +717,22 @@ Interval polling browser diatur di `config/dam.php` (`refresh`).
 - `roles` — peran: slug, nama, sisi perawatan, dan daftar hak aksesnya.
   `users.role` menyimpan slug-nya.
 - `dams` — identitas dan elevasi acuan bendungan.
-- `sensor_stations` — 16 stasiun; `map_x`/`map_y` adalah posisi dalam persen
+- `sensor_stations` — 17 stasiun; `map_x`/`map_y` adalah posisi dalam persen
   terhadap render bendungan (bukan lat/lon), `panorama` menunjuk berkas `.webp`.
 - `sensor_metrics` — definisi parameter per stasiun: satuan, desimal, rentang
   normal, ambang waspada/siaga/bahaya.
 - `sensor_readings` — nilai time-series (`station`, `metric_key`, `value`,
   `recorded_at`).
 - `panorama_hotspots` — titik sorot di panorama: `yaw`/`pitch` derajat, tipe
-  `metric` (menampilkan bacaan), `info`, atau `link` (pindah panorama).
+  `metric` (menampilkan bacaan), `info`, `plot` (petak patok geser), atau
+  `link` (pindah panorama). Tipe `plot` memakai `meta` untuk sisi (hulu/hilir),
+  kode baris, jumlah patok, jarak antar patok, ukuran satu petak, arah garis
+  dan perspektifnya, serta arah lereng pada gambar — posisi tiap petak, patok,
+  angka pergeseran dan panah arahnya diturunkan dari situ, bukan disimpan
+  satu-satu. Satu-satunya yang disimpan per patok adalah selisih hasil geseran
+  manual (`meta.places`). Sudutnya bisa digeser dari
+  panggung; seeder hanya menulis sudut saat baris dibuat, jadi penempatan hasil
+  geser tidak hilang saat `db:seed` dijalankan lagi.
 - `alerts`, `maintenance_tasks`, `reports`, `settings`, `users`.
 
 Ambang batas menentukan status (`normal`, `waspada`, `siaga`, `bahaya`) yang

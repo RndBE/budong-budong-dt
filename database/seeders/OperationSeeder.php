@@ -77,7 +77,6 @@ class OperationSeeder extends Seeder
             ['station' => 'avwr-01', 'title' => 'Kalibrasi ulang piezometer VW zona inti', 'type' => 'kalibrasi', 'status' => 'terjadwal', 'priority' => 'tinggi', 'assignee' => 'Tim Instrumentasi', 'days' => 4],
             ['station' => 'awr-01', 'title' => 'Bersihkan penakar hujan dan panel surya', 'type' => 'preventif', 'status' => 'terjadwal', 'priority' => 'normal', 'assignee' => 'Petugas OP Pagi', 'days' => 2],
             ['station' => 'adr-01', 'title' => 'Verifikasi prisma hilang pada blok tengah', 'type' => 'korektif', 'status' => 'berjalan', 'priority' => 'tinggi', 'assignee' => 'Surveyor Geodesi', 'days' => 0],
-            ['station' => 'cctv-02', 'title' => 'Ganti housing kamera spillway yang berkabut', 'type' => 'korektif', 'status' => 'tertunda', 'priority' => 'normal', 'assignee' => 'Teknisi Elektronik', 'days' => -3],
             ['station' => 'v-notch', 'title' => 'Pengukuran manual debit rembesan pembanding', 'type' => 'inspeksi', 'status' => 'selesai', 'priority' => 'normal', 'assignee' => 'Tim Geoteknik', 'days' => -1],
             ['station' => 'radio-ap', 'title' => 'Audit link budget backhaul 5 GHz', 'type' => 'preventif', 'status' => 'terjadwal', 'priority' => 'rendah', 'assignee' => 'Tim Jaringan', 'days' => 9],
             ['station' => 'ews-01', 'title' => 'Uji fungsi sirene mingguan', 'type' => 'preventif', 'status' => 'selesai', 'priority' => 'normal', 'assignee' => 'Petugas OP Siang', 'days' => -2],
@@ -130,12 +129,6 @@ class OperationSeeder extends Seeder
         }
 
         $threads = [
-            'cctv-02' => [
-                ['operator', 'Housing kamera spillway berkabut lagi sejak hujan semalam, rekamannya buram. Bisa dijadwalkan penggantian?', 30],
-                ['cs', 'Diterima. Housing pengganti ada di gudang pusat, perkiraan tiba Kamis. Tiket saya tahan di status tertunda dulu.', 26],
-                ['operator', 'Baik. Kalau bisa sekalian periksa segel kabel di tiang yang sama.', 20],
-                ['cs', 'Dicatat, teknisi akan membawa segel cadangan.', 6],
-            ],
             'adr-01' => [
                 ['operator', 'Prisma blok tengah tidak terbaca sejak pagi, hasil pengukuran melompat 2 mm.', 10],
                 ['cs', 'Surveyor sedang menuju lokasi. Kemungkinan prisma bergeser terkena ranting; laporannya menyusul hari ini.', 4],

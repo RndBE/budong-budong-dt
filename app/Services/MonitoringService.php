@@ -4,19 +4,25 @@ namespace App\Services;
 
 use App\Models\Alert;
 use App\Models\Dam;
+use App\Models\GateCommand;
 use App\Models\MaintenanceMessage;
 use App\Models\MaintenanceTask;
+use App\Models\PanoramaHotspot;
 use App\Models\SensorMetric;
 use App\Models\SensorReading;
 use App\Models\SensorStation;
 use App\Models\Setting;
 use App\Models\User;
+use App\Services\Telemetry\ReadingSimulator;
 use App\Services\Telemetry\TelemetryProvider;
 use App\Services\Weather\WeatherProvider;
+use App\Support\DashboardLayout;
+use App\Support\SkyState;
 use App\Support\SolarClock;
 use Carbon\CarbonImmutable;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Collection;
+use Illuminate\Validation\ValidationException;
 
 /**
  * Assembles every payload the dashboard renders: header environment strip,
@@ -42,6 +48,38 @@ class MonitoringService
         $dam = $this->dam();
 
         return new SolarClock($dam->latitude, $dam->longitude, $dam->timezone);
+    }
+
+    /**
+     * The parameters a station pin walks through, headline first.
+     *
+     * A state parameter reads as its word rather than its number — the number
+     * is the storage, the word is the reading — and a parameter with nothing
+     * behind it still appears, because a gap in the data is something an
+     * operator should see rather than a row that quietly vanishes.
+     *
+     * @param  array<string, array<string, mixed>>  $readings
+     * @return list<array<string, mixed>>
+     */
+    private function pinReadings(SensorStation $station, array $readings, ?SensorMetric $primary): array
+    {
+        return $station->metrics
+            ->sortByDesc(fn (SensorMetric $metric) => $metric->key === $primary?->key)
+            ->map(function (SensorMetric $metric) use ($readings) {
+                $value = $readings[$metric->key]['value'] ?? null;
+                $value = $value === null ? null : (float) $value;
+
+                return [
+                    'key' => $metric->key,
+                    'label' => $metric->label,
+                    'value' => $value === null
+                        ? '—'
+                        : ($metric->stateLabel($value) ?? $this->formatValue($value, $metric)),
+                    'status' => $value === null ? 'offline' : $metric->statusFor($value),
+                ];
+            })
+            ->values()
+            ->all();
     }
 
     /* ------------------------------------------------------------------ *
@@ -90,8 +128,53 @@ class MonitoringService
                     ])->all(),
             ],
             'weather' => $this->weather->current($dam),
+            'sky' => $this->sky($sun['elevation']),
             'stage' => $this->stage(),
         ];
+    }
+
+    /**
+     * The sky as the instruments see it: light against rain.
+     *
+     * Cloud has no sensor, but it has a shadow — illuminance far below what a
+     * clear sky would deliver at this solar elevation. Read with the rain
+     * gauge it tells an overcast morning apart from one that is already
+     * drizzling, which is what the stage illustrates.
+     */
+    public function sky(float $elevation): array
+    {
+        $station = SensorStation::query()
+            ->where('dam_id', $this->dam()->id)
+            ->where('type', 'weather')
+            ->with('metrics')
+            ->first();
+
+        $latest = $station
+            ? ($this->telemetry->latestForStations(collect([$station]))[$station->id] ?? [])
+            : [];
+
+        $value = fn (string $key) => isset($latest[$key]) ? (float) $latest[$key]['value'] : null;
+
+        $sky = app(SkyState::class);
+
+        return $sky->read(
+            $value('illuminance'),
+            $elevation,
+            $value('rainfall_intensity'),
+            $value('rainfall_24h'),
+        ) + [
+            // The what-if buttons read their numbers from here, so the browser
+            // never invents a scene the server would not have produced.
+            'presets' => collect(array_keys($sky->labels()))
+                ->mapWithKeys(fn (string $code) => [$code => $sky->scenario($code)])
+                ->all(),
+        ];
+    }
+
+    /** A what-if preset, for the stage's scenario buttons. */
+    public function skyScenario(string $code): array
+    {
+        return app(SkyState::class)->scenario($code);
     }
 
     /**
@@ -113,6 +196,7 @@ class MonitoringService
                     'yaw' => (float) $base->panorama_yaw,
                     'pitch' => (float) $base->panorama_pitch,
                     'north_offset' => $this->northOffset($base),
+                    'bearing' => $base->panorama_bearing,
                 ],
                 'phases' => $this->basePhases($base),
             ] : null,
@@ -200,6 +284,7 @@ class MonitoringService
             'health' => $this->health($evaluated),
             'recent' => $this->recentReadings($stations, $latest),
             'alerts' => $this->activeAlerts(),
+            'alert_history' => $this->alertHistory(),
             'system' => $this->systemStatus($stations, $evaluated),
         ];
     }
@@ -283,11 +368,22 @@ class MonitoringService
                     'yaw' => (float) $station->panorama_yaw,
                     'pitch' => (float) $station->panorama_pitch,
                     'north_offset' => $this->northOffset($station),
+                    // Which way that panorama opens, measured from north.
+                    'bearing' => $station->panorama_bearing,
                 ] : null,
                 'primary_metric' => $primary?->key,
                 'caption' => $primary && $value !== null
                     ? $this->formatValue($value, $primary)
                     : ($station->is_online ? 'Aktif' : 'Offline'),
+                /*
+                | Every parameter the pin can show, headline first. A pin that
+                | names one figure and hides the other nine is a pin the reader
+                | has to open the station to get past; the caption walks
+                | through these instead, one at a time, and says which it is
+                | showing. Already-formatted, because formatting a reading is
+                | the service's job wherever else it happens.
+                */
+                'readings' => $this->pinReadings($station, $readings, $primary),
             ];
         })->values()->all();
     }
@@ -366,9 +462,10 @@ class MonitoringService
                 'thumb' => $station->panoramaThumbUrl(),
                 'yaw' => $station->panorama_yaw,
                 'pitch' => $station->panorama_pitch,
-                'north_offset' => $station->panorama_north_offset,
+                'north_offset' => $this->northOffset($station),
+                'bearing' => $station->panorama_bearing,
             ],
-            'hotspots' => $station->hotspots->map(fn ($hotspot) => [
+            'hotspots' => $station->hotspots->map(fn (PanoramaHotspot $hotspot) => [
                 'id' => $hotspot->id,
                 'type' => $hotspot->type,
                 'label' => $hotspot->label,
@@ -376,6 +473,8 @@ class MonitoringService
                 'metric_key' => $hotspot->metric_key,
                 'yaw' => $hotspot->yaw,
                 'pitch' => $hotspot->pitch,
+                'meta' => $hotspot->meta ?? [],
+                'stakes' => $this->stakes($hotspot, $station, $readings),
                 'target' => $hotspot->targetStation?->only(['code', 'name']),
             ])->values()->all(),
             'metrics' => $metrics,
@@ -618,6 +717,207 @@ class MonitoringService
         ];
     }
 
+    /**
+     * How far each prism of a monitoring plot has moved, and which way.
+     *
+     * The instrument measures the dam body, not one stake: `displacement_h`
+     * and `displacement_v` are what the RTS reports for this station. A plot's
+     * prisms are where that movement is *distributed* — the shape of the
+     * deformation field across one elevation — so each stake carries a fixed
+     * share of the measured figure, derived from its own code so the pattern
+     * is stable between requests instead of shimmering every poll.
+     *
+     * `aspect` is an angle **in the picture**, not a surveyed azimuth: it
+     * comes from the plot's own aspect — which way the body is pushed in that
+     * panorama, away from the water — with a small per-stake deviation, and it
+     * is what the arrow on the stage is drawn at. Nothing here claims to be a
+     * bearing.
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function stakes(PanoramaHotspot $hotspot, SensorStation $station, array $readings): array
+    {
+        if (! $hotspot->isPlot()) {
+            return [];
+        }
+
+        $meta = $hotspot->meta ?? [];
+        $horizontal = $readings['displacement_h']['value'] ?? null;
+        $vertical = $readings['displacement_v']['value'] ?? null;
+        $metric = $station->metrics->firstWhere('key', 'displacement_h');
+        // Downstream, which is where a dam body goes: away from the water.
+        $aspect = (float) ($meta['aspect'] ?? 0);
+
+        // A stable number per stake, in 0..1, from its code.
+        $share = fn (string $code, string $salt) => (crc32($code.$salt) % 1000) / 1000;
+
+        return array_map(function (string $code) use ($horizontal, $vertical, $metric, $aspect, $share) {
+            /*
+            | Nothing measured yet, so nothing to judge. Not `offline`: that is
+            | a state a logger can be in, and a prism is a piece of glass on a
+            | stake — it is the total station that goes off the air. A null
+            | status is drawn plain, which says "not read" rather than "read
+            | and fine".
+            */
+            if ($horizontal === null && $vertical === null) {
+                return ['code' => $code, 'linear' => null, 'status' => null];
+            }
+
+            $sideways = (float) $horizontal * (0.55 + 0.85 * $share($code, 'h'));
+            $settling = (float) $vertical * (0.6 + 0.75 * $share($code, 'v'));
+            $travelled = sqrt($sideways ** 2 + $settling ** 2);
+
+            /*
+            | What the instrument reports at a prism is how far that prism has
+            | moved since it was set, not how far it moved this cycle — so the
+            | figure carries years of accumulated creep, and the prisms do not
+            | carry the same amount. A dam creeps unevenly: most of a face sits
+            | well inside its band while a handful of points have gone much
+            | further, which is the entire reason anybody watches thirty of
+            | them instead of one.
+            |
+            | Cubed, so that shape comes out: many small, a few large, one or
+            | two past the alert. Derived from the code alone, like the share
+            | above — from the clock or `rand()` and the field would shimmer on
+            | every poll.
+            */
+            $creep = 0.3 + 26.0 * $share($code, 'creep') ** 3;
+            $linear = $travelled + $creep;
+
+            // Keep the parts adding up to the whole the panel prints.
+            $grown = $travelled > 1e-6 ? $linear / $travelled : 0.0;
+            $sideways *= $grown;
+            $settling *= $grown;
+
+            return [
+                'code' => $code,
+                'linear' => round($linear, 2),
+                // Formatting stays on the server, like every other reading.
+                'formatted' => number_format($linear, 2, ',', '.'),
+                'short' => number_format($linear, 1, ',', '.'),
+                'horizontal' => round($sideways, 2),
+                'vertical' => round($settling, 2),
+                'horizontal_formatted' => number_format($sideways, 2, ',', '.'),
+                'vertical_formatted' => number_format($settling, 2, ',', '.'),
+                // Plus or minus 10 degrees off the plot's own aspect: prisms
+                // on one elevation do not all creep in exactly one direction,
+                // but the field still has to read as one direction.
+                'aspect' => round($aspect + ($share($code, 'a') * 20) - 10, 1),
+                'status' => $metric ? $metric->statusFor($linear) : 'normal',
+            ];
+        }, $hotspot->stakeCodes());
+    }
+
+    /**
+     * Order one spillway gate to an opening, in centimetres of its stroke.
+     *
+     * Centimetres because that is what the hoist reports and what a person
+     * says when they open a gate; the percentage beside it is derived, not
+     * the other way round.
+     *
+     * The order is recorded, not applied: what this writes is that somebody
+     * asked for this figure at this moment, which is the part a flood report
+     * has to be able to quote. The gate then travels there in the readings.
+     * Nothing here claims the leaf has moved.
+     *
+     * @return array<string, mixed>
+     */
+    public function orderGate(string $code, int $gate, float $opening, ?User $user = null): array
+    {
+        /** @var SensorStation $station */
+        $station = SensorStation::query()
+            ->where('dam_id', $this->dam()->id)
+            ->where('code', $code)
+            ->firstOrFail();
+
+        $leaf = $station->hotspots()
+            ->where('type', 'gate')
+            ->get()
+            ->first(fn (PanoramaHotspot $hotspot) => (int) ($hotspot->meta['gate'] ?? 0) === $gate);
+
+        abort_unless($leaf !== null, 404);
+
+        $stroke = (float) ($leaf->meta['height_cm'] ?? 0);
+        $stroke = $stroke > 0 ? $stroke : 100.0;
+
+        /*
+        | Refused, not trimmed. Quietly reducing 140 cm to 100 would record an
+        | order nobody gave and leave the operator believing the gate is going
+        | somewhere it is not — on a control that opens a spillway, silently
+        | doing something other than what was asked is the worst answer
+        | available.
+        */
+        if ($opening < 0 || $opening > $stroke) {
+            throw ValidationException::withMessages([
+                'opening' => "Bukaan harus antara 0 dan {$stroke} cm, yaitu langkah penuh {$leaf->label}.",
+            ]);
+        }
+
+        $opening = round($opening, 2);
+
+        $command = GateCommand::query()->create([
+            'sensor_station_id' => $station->id,
+            'gate' => $gate,
+            'opening' => $opening,
+            'user_id' => $user?->id,
+            'issued_at' => CarbonImmutable::now(),
+        ]);
+
+        /*
+        | Post the order to the series straight away, so the panel shows the
+        | target the moment it is given instead of waiting for the next
+        | telemetry tick. The opening is written too, at where the leaf still
+        | is: the order has been given, the gate has not moved, and the panel
+        | should say exactly that.
+        */
+        $this->postGateReadings($station, $gate);
+
+        return [
+            'station' => $station->code,
+            'gate' => $gate,
+            'label' => $leaf->label,
+            'stroke_cm' => $stroke,
+            'opening' => $opening,
+            'opening_percent' => round($opening / $stroke * 100, 1),
+            // Stored in UTC, read in the dam's own hours; the converted
+            // instance has to be kept, the models return immutables.
+            'issued_at' => $command->issued_at->setTimezone($this->dam()->timezone)->format('d M Y H:i'),
+            'by' => $user?->name,
+        ];
+    }
+
+    /**
+     * Write this instant's opening and target for one gate.
+     *
+     * Through the simulator, so the two rows agree with everything the
+     * scheduled run will write after them; when a real logger replaces the
+     * simulator this is the one call that goes, and the gate then reports
+     * itself.
+     */
+    private function postGateReadings(SensorStation $station, int $gate): void
+    {
+        $simulator = app(ReadingSimulator::class);
+        $simulator->forgetOrders($station);
+
+        $now = CarbonImmutable::now();
+
+        foreach (["gate_opening_{$gate}", "gate_target_{$gate}"] as $key) {
+            $metric = $station->metrics()->where('key', $key)->first();
+
+            if (! $metric) {
+                continue;
+            }
+
+            SensorReading::query()->create([
+                'sensor_station_id' => $station->id,
+                'metric_key' => $key,
+                'value' => round($simulator->value($station, $metric, $now), 4),
+                'quality' => 'good',
+                'recorded_at' => $now,
+            ]);
+        }
+    }
+
     /** Store a new marker position (percentages of the photo region). */
     public function moveStation(string $code, float $x, float $y): array
     {
@@ -648,16 +948,8 @@ class MonitoringService
             ->where('code', $code)
             ->firstOrFail();
 
-        $yaw = fmod($yaw, 360);
-
-        if ($yaw > 180) {
-            $yaw -= 360;
-        } elseif ($yaw < -180) {
-            $yaw += 360;
-        }
-
         $station->forceFill([
-            'sphere_yaw' => round($yaw, 3),
+            'sphere_yaw' => round($this->normaliseYaw($yaw), 3),
             'sphere_pitch' => round(max(-85, min(85, $pitch)), 3),
         ])->save();
 
@@ -665,6 +957,82 @@ class MonitoringService
             'code' => $station->code,
             'sphere' => $this->spherePosition($station, $this->sphereOrigin()),
         ];
+    }
+
+    /**
+     * Store where a hotspot sits inside its own station panorama (degrees).
+     *
+     * The renders carry no survey, so the seeded angles for a prism or an
+     * instrument are an estimate. Placing one is the same gesture as placing a
+     * station pin on the base panorama, and it writes to the same kind of
+     * record rather than to a browser preference.
+     */
+    public function moveHotspot(int $id, float $yaw, float $pitch): array
+    {
+        /** @var PanoramaHotspot $hotspot */
+        $hotspot = PanoramaHotspot::query()
+            ->whereKey($id)
+            ->whereHas('station', fn ($query) => $query->where('dam_id', $this->dam()->id))
+            ->firstOrFail();
+
+        $hotspot->forceFill([
+            'yaw' => round($this->normaliseYaw($yaw), 3),
+            'pitch' => round(max(-85, min(85, $pitch)), 3),
+        ])->save();
+
+        return [
+            'id' => $hotspot->id,
+            'station' => $hotspot->station->code,
+            'label' => $hotspot->label,
+            'yaw' => (float) $hotspot->yaw,
+            'pitch' => (float) $hotspot->pitch,
+        ];
+    }
+
+    /**
+     * Nudge one stake off the line's own layout.
+     *
+     * A line of prisms is one record, so a correction to a single stake is
+     * stored as an offset in that record's `meta.places` rather than as a row
+     * of its own. Offsets, not angles: moving the line later has to carry
+     * every correction with it, which an absolute angle would not.
+     */
+    public function moveStake(int $id, int $stake, float $offsetYaw, float $offsetPitch): array
+    {
+        /** @var PanoramaHotspot $hotspot */
+        $hotspot = PanoramaHotspot::query()
+            ->whereKey($id)
+            ->whereHas('station', fn ($query) => $query->where('dam_id', $this->dam()->id))
+            ->firstOrFail();
+
+        $meta = $hotspot->meta ?? [];
+        $count = (int) ($meta['stakes'] ?? 0);
+
+        abort_unless($hotspot->isPlot() && $stake >= 1 && $stake <= $count, 404);
+
+        $meta['places'] = ($meta['places'] ?? []) + [];
+        $meta['places'][(string) $stake] = [round($offsetYaw, 3), round($offsetPitch, 3)];
+
+        $hotspot->forceFill(['meta' => $meta])->save();
+
+        return [
+            'id' => $hotspot->id,
+            'station' => $hotspot->station->code,
+            'stake' => $hotspot->stakeCodes()[$stake - 1] ?? (string) $stake,
+            'offset' => $meta['places'][(string) $stake],
+        ];
+    }
+
+    /** Fold a yaw into -180..180, which is how the columns are read back. */
+    private function normaliseYaw(float $yaw): float
+    {
+        $yaw = fmod($yaw, 360);
+
+        if ($yaw > 180) {
+            return $yaw - 360;
+        }
+
+        return $yaw < -180 ? $yaw + 360 : $yaw;
     }
 
     /**
@@ -765,7 +1133,9 @@ class MonitoringService
     {
         $tiles = [];
 
-        foreach ((array) config('dam.primary_parameters') as $definition) {
+        // What the board is set to show, which is `dam.primary_parameters`
+        // until somebody arranges it otherwise.
+        foreach (DashboardLayout::tiles() as $definition) {
             $station = $stations->firstWhere('code', $definition['station']);
             if (! $station) {
                 continue;
@@ -805,7 +1175,21 @@ class MonitoringService
     {
         $rows = [];
 
+        /*
+        | Whatever is already a headline tile is not repeated here. The two
+        | lists were configured independently and overlapped on all four
+        | figures, so a quarter of the screen was the same numbers twice —
+        | printed once in large type and again in a list beside it.
+        */
+        $onTiles = collect(DashboardLayout::tiles())
+            ->map(fn (array $tile) => $tile['station'].':'.$tile['metric'])
+            ->all();
+
         foreach ((array) config('dam.recent_readings') as $definition) {
+            if (in_array($definition['station'].':'.$definition['metric'], $onTiles, true)) {
+                continue;
+            }
+
             $station = $stations->firstWhere('code', $definition['station']);
             if (! $station) {
                 continue;
@@ -885,6 +1269,11 @@ class MonitoringService
         }
 
         return [
+            // How many parameters are asking for a look. A count, because the
+            // score is a rounded fraction with its drift absorbed into the
+            // largest bucket — an honest two-digit number it is not.
+            'attention' => $total - $buckets['aman'],
+            'total' => $total,
             'score' => $percent['aman'],
             'total_points' => $total,
             'buckets' => collect($percent)->map(fn (int $value, string $key) => [
@@ -900,6 +1289,29 @@ class MonitoringService
                 },
             ])->values()->all(),
         ];
+    }
+
+    /**
+     * The newest alerts, settled or not.
+     *
+     * Distinct from `activeAlerts()` on purpose: the board and the summary
+     * column were both drawing the same live list, so one of the two said
+     * nothing the other had not. What a shift wants on arriving is what
+     * *happened*, including what has since been closed — the standing ones
+     * are already down the right of every page.
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function alertHistory(int $limit = 8): array
+    {
+        return Alert::query()
+            ->where('dam_id', $this->dam()->id)
+            ->with('station:id,code,name')
+            ->orderByDesc('triggered_at')
+            ->limit($limit)
+            ->get()
+            ->map(fn (Alert $alert) => $this->presentAlert($alert))
+            ->all();
     }
 
     private function activeAlerts(int $limit = 6): array

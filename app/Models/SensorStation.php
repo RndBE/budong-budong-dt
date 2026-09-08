@@ -22,6 +22,7 @@ class SensorStation extends Model
         'panorama_yaw' => 'float',
         'panorama_pitch' => 'float',
         'panorama_north_offset' => 'float',
+        'panorama_bearing' => 'float',
         'sphere_yaw' => 'float',
         'sphere_pitch' => 'float',
         'is_online' => 'boolean',

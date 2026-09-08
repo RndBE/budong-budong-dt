@@ -29,6 +29,17 @@ class AuthenticationTest extends TestCase
             ->assertSee('assets/panorama/preview/base-dam-', escape: false);
     }
 
+    public function test_demo_credentials_are_hidden_in_production(): void
+    {
+        config(['app.env' => 'production']);
+        $this->seed([DamSeeder::class, StationSeeder::class]);
+
+        $this->get('/login')
+            ->assertOk()
+            ->assertDontSee('Akun demo')
+            ->assertDontSee('value="admin@bwssulawesi5.go.id"', escape: false);
+    }
+
     public function test_an_operator_can_sign_in_and_lands_on_the_map(): void
     {
         $this->seed([DamSeeder::class, StationSeeder::class]);

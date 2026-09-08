@@ -5,7 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>Masuk · Digital Twin Bendungan Budong Budong</title>
-    <link rel="icon" href="{{ asset('assets/icon/favicon.svg') }}" type="image/svg+xml">
+    {{-- The ministry logo, scaled by `tools/build_favicon.py`. Not the
+         598px original: sixty-five kilobytes for something drawn at sixteen
+         pixels, paid on every page load. --}}
+    <link rel="icon" href="{{ asset('assets/icon/logopu-32.png') }}" type="image/png" sizes="32x32">
+    <link rel="apple-touch-icon" href="{{ asset('assets/icon/logopu-180.png') }}" sizes="180x180">
     @vite(['resources/css/app.css', 'resources/js/app.js'])
 </head>
 <body class="h-full">
@@ -56,7 +60,7 @@
 
             <label class="block">
                 <span class="mb-1.5 block text-[11px] font-medium text-mist-300">Email</span>
-                <input type="email" name="email" value="{{ old('email', 'admin@bwssulawesi5.go.id') }}" required autofocus
+                <input type="email" name="email" value="{{ old('email', config('app.env') === 'production' ? '' : 'admin@bwssulawesi5.go.id') }}" required autofocus
                        class="glass glass--inset w-full px-3.5 py-2.5 text-[13px] text-white">
             </label>
 
@@ -81,11 +85,13 @@
             </button>
         </form>
 
-        <div class="mt-5 border-t border-white/10 pt-3.5 text-[11px] text-mist-400">
-            <p class="font-semibold text-mist-300">Akun demo</p>
-            <p class="mt-1 font-mono">admin@bwssulawesi5.go.id · password</p>
-            <p class="font-mono">operator@bwssulawesi5.go.id · password</p>
-        </div>
+        @if(config('app.env') !== 'production')
+            <div class="mt-5 border-t border-white/10 pt-3.5 text-[11px] text-mist-400">
+                <p class="font-semibold text-mist-300">Akun demo</p>
+                <p class="mt-1 font-mono">admin@bwssulawesi5.go.id · password</p>
+                <p class="font-mono">operator@bwssulawesi5.go.id · password</p>
+            </div>
+        @endif
     </div>
 
     <p class="absolute bottom-5 z-10 text-[11px] text-mist-400">

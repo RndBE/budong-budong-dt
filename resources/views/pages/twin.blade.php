@@ -16,7 +16,10 @@
         <div class="absolute inset-0"
              :class="{
                  'sphere--quiet': !showLabels,
-                 'sphere--placing': editMarkers && !$store.viewer.open,
+                 'sphere--placing': editMarkers,
+                 'sphere--vectors': showVectors,
+                 {{-- Close enough that a figure per stake still has room. --}}
+                 'sphere--near': zoom >= 0.34 || showFigures,
                  'sphere--departing': departing,
              }">
 
@@ -30,6 +33,11 @@
                      transitionDuration: $store.site.sceneTransition,
                      transitionTimingFunction: 'linear',
                  }"></div>
+
+            {{-- Cloud and rain, from the weather station or the scenario. --}}
+            <div class="pointer-events-none absolute inset-0 overflow-hidden">
+                @include('partials.sky-layers')
+            </div>
 
             {{-- Night wash: the panorama itself was shot in daylight, so dusk
                  and night are painted on top of the graded texture. --}}
@@ -77,9 +85,13 @@
 
             {{-- Compass: the case and its top marker stay put — that marker is
                  where the camera looks. The dial with the cardinal points turns
-                 underneath it, so the red needle always shows north. --}}
+                 underneath it, so the red needle always shows north.
+
+                 Flush with the top of the stage, which is the line the rail
+                 and the summary panel both start on: the three of them are the
+                 same row of chrome and should read as one. --}}
             <button type="button"
-                    class="glass glass--chip glass-button pointer-events-auto absolute left-2 top-2 flex flex-col items-center gap-0.5 px-2 py-1.5 max-sm:hidden"
+                    class="glass glass--chip glass-button pointer-events-auto absolute left-2 top-0 flex flex-col items-center gap-0.5 px-2 py-1.5 max-sm:hidden"
                     x-sheen
                     :title="'Arah pandang ' + compassLabel + ' — klik untuk menghadap utara'"
                     :aria-label="'Arah pandang ' + compassLabel + '. Klik untuk menghadap utara'"
@@ -113,19 +125,62 @@
 
             {{-- Camera controls --}}
             <div class="pointer-events-auto absolute bottom-2 right-2 flex flex-col gap-2">
-                {{-- Placing pins writes to the station record, so it follows
-                     the `stations.move` ability. --}}
+                {{-- Folding the summary panel away. It belongs in this stack
+                     rather than floating beside it: parked at the middle of
+                     the screen it landed on whichever control happened to be
+                     at the top of the column, and a control that has to dodge
+                     another one is in the wrong place. Only on `xl`, where the
+                     panel has a column of its own to give back. --}}
+                <button type="button"
+                        class="glass glass--chip glass-button hidden size-11 xl:grid"
+                        :title="panelCollapsed ? 'Tampilkan panel data' : 'Sembunyikan panel data'"
+                        :aria-label="panelCollapsed ? 'Tampilkan panel data' : 'Sembunyikan panel data'"
+                        :aria-expanded="!panelCollapsed"
+                        @click="togglePanel()">
+                    <x-icon name="chevrons-right" class="size-4 transition"
+                            ::class="panelCollapsed ? 'rotate-180' : ''"/>
+                </button>
+
+                {{-- One control for both views: station pins on the base
+                     panorama, that station's own hotspots inside it. Both
+                     write to a record, so both follow `stations.move`. --}}
                 @can('stations.move')
                 <button type="button" class="glass glass--chip glass-button size-11"
-                        x-show="!$store.viewer.open"
                         :class="editMarkers && 'text-brand-300 ring-1 ring-brand-400/60'"
-                        :title="editMarkers ? 'Selesai atur posisi penanda' : 'Atur posisi penanda'"
-                        :aria-label="editMarkers ? 'Selesai atur posisi penanda' : 'Atur posisi penanda'"
+                        :title="placeLabel"
+                        :aria-label="placeLabel"
                         :aria-pressed="editMarkers"
                         @click="toggleMarkerEditing()">
                     <x-icon name="map-pin" class="size-[18px]"/>
                 </button>
                 @endcan
+
+                {{-- Which way each prism has moved. Only offered where there
+                     are prisms to point: the arrows would be an empty promise
+                     on a panorama that carries none. --}}
+                <button type="button" class="glass glass--chip glass-button size-11"
+                        x-show="$store.viewer.open && hasStakes" x-cloak
+                        :class="showVectors && 'text-brand-300 ring-1 ring-brand-400/60'"
+                        :title="showVectors ? 'Sembunyikan arah pergeseran' : 'Tampilkan arah pergeseran patok'"
+                        :aria-label="showVectors ? 'Sembunyikan arah pergeseran' : 'Tampilkan arah pergeseran patok'"
+                        :aria-pressed="showVectors"
+                        @click="toggleVectors()">
+                    <x-icon name="deformation" class="size-[18px]"/>
+                </button>
+
+                {{-- The figures those arrows are the length of. They arrive
+                     with the zoom that makes room for them; this holds them
+                     open at any zoom, which is the reader's call because the
+                     far end of a line will overlap. --}}
+                <button type="button" class="glass glass--chip glass-button size-11"
+                        x-show="$store.viewer.open && hasStakes" x-cloak
+                        :class="showFigures && 'text-brand-300 ring-1 ring-brand-400/60'"
+                        :title="showFigures ? 'Sembunyikan besar pergeseran' : 'Tampilkan besar pergeseran tiap patok'"
+                        :aria-label="showFigures ? 'Sembunyikan besar pergeseran' : 'Tampilkan besar pergeseran tiap patok'"
+                        :aria-pressed="showFigures"
+                        @click="toggleFigures()">
+                    <x-icon name="tag" class="size-[18px]"/>
+                </button>
 
                 <button type="button" class="glass glass--chip glass-button size-11"
                         :class="rotating && 'text-brand-300'" title="Putar otomatis" aria-label="Putar otomatis" @click="toggleRotate()">
@@ -196,11 +251,27 @@
                 </div>
             </div>
 
-            {{-- Pin placement hint --}}
-            <div class="pointer-events-none absolute left-1/2 bottom-14 -translate-x-1/2"
-                 x-show="editMarkers && !$store.viewer.open" x-cloak>
+            {{-- Placement hint. Inside a station it has to clear the metric
+                 strip, which sits on the stage floor.
+
+                 The offset is bound as a *class*, not a style: `x-show` hides
+                 an element by writing `display` into its style attribute, and
+                 a `:style` binding on the same element rewrites that attribute
+                 whole — which put this hint on screen with placement off. --}}
+            <div class="pointer-events-none absolute left-1/2 -translate-x-1/2"
+                 x-show="editMarkers" x-cloak
+                 :class="$store.viewer.open ? 'bottom-[calc(var(--stage-bottom)+78px)]' : 'bottom-14'">
+                <span class="glass glass--chip glass--flat px-3.5 py-2 text-[11px] font-medium text-mist-100"
+                      x-text="placeHint"></span>
+            </div>
+
+            {{-- An arrow is a length, so the scale it was drawn at has to be
+                 on screen with it. --}}
+            <div class="pointer-events-none absolute left-1/2 -translate-x-1/2 bottom-14"
+                 x-show="showVectors && $store.viewer.open && !editMarkers" x-cloak>
                 <span class="glass glass--chip glass--flat px-3.5 py-2 text-[11px] font-medium text-mist-100">
-                    Seret penanda ke titik aslinya di panorama — tersimpan otomatis.
+                    Panah = arah pergeseran pada gambar · panjangnya
+                    <span class="tnum" x-text="vectorScale.toLocaleString('id-ID')"></span> px per mm
                 </span>
             </div>
 
@@ -211,9 +282,28 @@
                 </span>
             </div>
 
+            {{-- Top right of the stage: what the sky is doing, and — on a
+                 station that has gates — how to work them. --}}
+            <div class="pointer-events-auto absolute right-2 top-2 flex items-start gap-2">
+
+                {{-- Working the spillway. It sits with the stage's own chrome
+                     rather than on the bottom bar because it belongs to one
+                     station, not to the stage; and it opens a dialog rather
+                     than a panel section, being the one control in the app
+                     that writes an order to a structure. --}}
+                <button type="button" class="glass glass--chip glass-button gap-2 px-3 py-2 text-[11px] font-semibold"
+                        x-show="$store.viewer.open && $store.viewer.gates.length" x-cloak
+                        :class="$store.viewer.gatesOpen ? 'text-brand-300 ring-1 ring-brand-400/60' : 'text-mist-200'"
+                        title="Kontrol pintu spillway" aria-label="Kontrol pintu spillway"
+                        :aria-pressed="$store.viewer.gatesOpen"
+                        @click="$store.viewer.openGates()">
+                    <x-icon name="gate" class="size-4"/>
+                    <span class="max-sm:hidden">Kontrol Pintu</span>
+                </button>
+
             {{-- Time control: follow the real clock, scrub a day, or play it back
                  faster than real time. Hidden where the panel toggle sits. --}}
-            <div class="pointer-events-auto absolute right-2 top-2 max-xl:hidden"
+            <div class="relative max-xl:hidden"
                  x-data="{ open: false }" @click.outside="open = false">
 
                 <button type="button"
@@ -222,6 +312,8 @@
                     <x-icon name="clock" class="size-3.5"
                             ::class="$store.site.clock.simulated ? 'text-amber-300' : 'text-brand-300'"/>
                     <span x-text="$store.site.scene.phase_label ?? $store.site.environment?.sun?.phase_label ?? ''"></span>
+                    <span class="text-mist-400">·</span>
+                    <span x-text="$store.site.sky.label"></span>
                     <span class="text-mist-400">·</span>
                     <span class="tnum" x-text="$store.site.clock.time.slice(0, 5)"></span>
                     <span x-show="$store.site.clock.simulated" x-cloak
@@ -277,9 +369,143 @@
                     </div>
 
                     <p class="tnum mt-1.5 text-[9.5px] text-mist-400" x-text="$store.site.speedLabel"></p>
+
+                    {{-- Skenario langit: a what-if, next to the other one. The
+                         reading it replaces is printed underneath so the two are
+                         never confused. --}}
+                    <div class="mt-3 border-t border-white/10 pt-3">
+                        <div class="mb-1.5 flex items-center justify-between">
+                            <span class="text-[10.5px] font-semibold text-mist-200">Skenario langit</span>
+                            <span x-show="$store.site.sky.simulated" x-cloak
+                                  class="rounded-md bg-amber-400/20 px-1.5 py-0.5 text-[9.5px] text-amber-200">
+                                simulasi
+                            </span>
+                        </div>
+
+                        <div class="grid grid-cols-3 gap-1">
+                            <button type="button"
+                                    class="glass glass--inset rounded-lg py-1.5 text-[10px] font-semibold transition"
+                                    :class="$store.site.skyScenario === 'auto' ? 'text-brand-300 ring-1 ring-brand-400/50' : 'text-mist-300 hover:text-white'"
+                                    title="Ikuti iluminasi dan penakar hujan"
+                                    @click="$store.site.setSkyScenario('auto')">Otomatis</button>
+
+                            <template x-for="code in ['cerah', 'berawan', 'mendung', 'rintik', 'hujan']" :key="'sky' + code">
+                                <button type="button"
+                                        class="glass glass--inset rounded-lg py-1.5 text-[10px] font-semibold capitalize transition"
+                                        :class="$store.site.skyScenario === code ? 'text-brand-300 ring-1 ring-brand-400/50' : 'text-mist-300 hover:text-white'"
+                                        @click="$store.site.setSkyScenario(code)"
+                                        x-text="code === 'rintik' ? 'Rintik' : code"></button>
+                            </template>
+                        </div>
+
+                        <p class="mt-1.5 text-[9.5px] leading-relaxed text-mist-400"
+                           x-text="$store.site.sky.reason"></p>
+                    </div>
                 </div>
             </div>
+            </div>
         </div>
+
+
+        {{-- Gate control. Teleported, because the stage sits in a transformed
+             stacking context and a fixed scrim declared inside it is trapped
+             under the header however high its z-index climbs. --}}
+        <template x-teleport="body">
+            <div x-show="$store.viewer.gatesOpen" x-cloak x-transition.opacity.duration.150ms
+                 class="modal-scrim" @click.self="$store.viewer.closeGates()"
+                 @keydown.escape.window="$store.viewer.gatesOpen && $store.viewer.closeGates()">
+                <div class="modal-card modal-card--narrow glass glass--panel glass--menu p-4"
+                     x-show="$store.viewer.gatesOpen" x-transition
+                     role="dialog" aria-modal="true" aria-labelledby="gate-dialog-title"
+                     x-data="{ draft: {} }">
+                    <div class="mb-3 flex items-start justify-between gap-3">
+                        <div>
+                            <h3 id="gate-dialog-title" class="text-[15px] font-semibold text-white">Kontrol Pintu Spillway</h3>
+                            <p class="mt-0.5 text-[11px] text-mist-400">
+                                Bukaan adalah posisi daun saat ini dalam sentimeter; target adalah
+                                perintah terakhir. Daun bergerak beberapa menit sebelum keduanya bertemu.
+                            </p>
+                        </div>
+                        <button type="button" class="glass glass--chip glass-button size-9 shrink-0"
+                                title="Tutup" aria-label="Tutup kontrol pintu"
+                                @click="$store.viewer.closeGates()">
+                            <x-icon name="x" class="size-4"/>
+                        </button>
+                    </div>
+
+                    <div class="scroll-y max-h-[min(64dvh,520px)] pr-0.5">
+                        <template x-for="leaf in $store.viewer.gates" :key="leaf.id">
+                            <div class="glass glass--inset mb-2 p-3 last:mb-0"
+                                 :class="$store.viewer.gate === leaf.meta?.gate && 'ring-1 ring-brand-400/60'">
+                                <div class="flex items-baseline justify-between gap-2">
+                                    <p class="text-[12.5px] font-semibold text-white" x-text="leaf.label"></p>
+                                    <p class="tnum text-[11px] text-mist-300">
+                                        Target
+                                        <span class="font-semibold text-mist-100"
+                                              x-text="$store.viewer.gateMetric(leaf, 'target')?.formatted ?? '—'"></span> cm
+                                    </p>
+                                </div>
+
+                                <p class="tnum mt-0.5 text-[19px] leading-tight font-bold"
+                                   :style="`color:${window.statusColor($store.viewer.gateMetric(leaf)?.status ?? 'normal')}`">
+                                    <span x-text="$store.viewer.gateMetric(leaf)?.formatted ?? '—'"></span><span class="ml-1 text-[13px] font-semibold">cm</span>
+                                    <template x-if="$store.viewer.gatePercent(leaf) !== null">
+                                        <span class="ml-1.5 text-[12px] font-semibold text-mist-300">
+                                            · <span x-text="$store.viewer.gatePercent(leaf)"></span> %
+                                        </span>
+                                    </template>
+                                </p>
+
+                                @can('gates.control')
+                                    {{-- Wraps rather than squeezing: below the
+                                         slider's own minimum the number field
+                                         and the button would be crushed, and
+                                         this is the control that opens a
+                                         spillway. --}}
+                                    <div class="mt-2.5 flex flex-wrap items-center gap-2">
+                                        <input type="range" min="0" step="1" class="min-w-[140px] flex-1"
+                                               :max="$store.viewer.gateStroke(leaf)"
+                                               :aria-label="'Bukaan ' + leaf.label + ' dalam sentimeter'"
+                                               :value="draft[leaf.id] ?? Math.round($store.viewer.gateMetric(leaf, 'target')?.value ?? 0)"
+                                               @input="draft[leaf.id] = Number($event.target.value)">
+
+                                        <label class="glass glass--inset flex w-[78px] items-center gap-1 px-2 py-1.5">
+                                            <input type="number" min="0" step="1"
+                                                   class="tnum w-full min-w-0 bg-transparent text-right text-[12px] text-white outline-none"
+                                                   :max="$store.viewer.gateStroke(leaf)"
+                                                   :aria-label="'Bukaan ' + leaf.label + ' dalam sentimeter'"
+                                                   :value="draft[leaf.id] ?? Math.round($store.viewer.gateMetric(leaf, 'target')?.value ?? 0)"
+                                                   @input="draft[leaf.id] = Number($event.target.value)">
+                                            <span class="text-[11px] text-mist-400">cm</span>
+                                        </label>
+
+                                        <button type="button"
+                                                class="glass glass--chip glass-button min-h-10 px-3 text-[11.5px] font-semibold text-white"
+                                                :disabled="$store.viewer.gateBusy === leaf.meta?.gate"
+                                                @click="$store.viewer.orderGate(leaf, draft[leaf.id] ?? Math.round($store.viewer.gateMetric(leaf, 'target')?.value ?? 0))">
+                                            <span x-text="$store.viewer.gateBusy === leaf.meta?.gate ? 'Mengirim…' : 'Terapkan'"></span>
+                                        </button>
+                                    </div>
+
+                                    <p class="mt-1.5 text-[10.5px] text-mist-400">
+                                        Langkah penuh <span class="tnum" x-text="$store.viewer.gateStroke(leaf)"></span> cm ·
+                                        perintah <span class="tnum" x-text="draft[leaf.id] ?? Math.round($store.viewer.gateMetric(leaf, 'target')?.value ?? 0)"></span> cm
+                                        = <span class="tnum" x-text="Math.round((draft[leaf.id] ?? Math.round($store.viewer.gateMetric(leaf, 'target')?.value ?? 0)) / $store.viewer.gateStroke(leaf) * 100)"></span> %
+                                    </p>
+                                @endcan
+                            </div>
+                        </template>
+                    </div>
+
+                    <p class="mt-2 text-[11px] text-state-bahaya" x-show="$store.viewer.gateError" x-cloak
+                       x-text="$store.viewer.gateError"></p>
+
+                    @cannot('gates.control')
+                        <p class="mt-2 text-[11px] text-mist-400">Perannya tidak mencakup pengaturan bukaan pintu.</p>
+                    @endcannot
+                </div>
+            </div>
+        </template>
 
         {{-- Deep link: /digital-twin/{station} opens that panorama straight away --}}
         @if ($openStation)

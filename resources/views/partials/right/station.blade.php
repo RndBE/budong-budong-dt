@@ -4,11 +4,6 @@
     {{-- Identity + status --}}
     <div class="glass glass--panel panel-enter shrink-0 p-4" x-sheen>
         <div class="flex items-start gap-3">
-            <button type="button" class="glass glass--chip glass-button mt-0.5 size-9 shrink-0" title="Kembali ke digital twin"
-                    @click="$store.viewer.close()">
-                <x-icon name="arrow-left" class="size-4"/>
-            </button>
-
             <div class="min-w-0 flex-1">
                 <p class="text-[10.5px] font-semibold tracking-[.12em] text-brand-300 uppercase"
                    x-text="$store.viewer.station?.type_label"></p>
@@ -111,64 +106,4 @@
         </div>
     </div>
 
-    {{-- Hotspots in the panorama --}}
-    <div class="glass glass--panel panel-enter shrink-0 p-4" x-sheen
-         x-show="($store.viewer.station?.hotspots ?? []).length">
-        <h3 class="mb-2.5 text-[14px] font-semibold text-white">Titik Sorot Panorama</h3>
-        <ul class="space-y-1.5">
-            <template x-for="hotspot in ($store.viewer.station?.hotspots ?? [])" :key="hotspot.id">
-                <li>
-                    <button type="button"
-                            class="glass glass--inset flex w-full items-center gap-2.5 px-3 py-2 text-left transition hover:bg-white/8"
-                            @click="$dispatch('look-at', { yaw: hotspot.yaw, pitch: hotspot.pitch, hotspot })">
-                        <x-icon name="crosshair" class="size-4 shrink-0 text-brand-300"/>
-                        <span class="min-w-0 flex-1">
-                            <span class="block truncate text-[12px] font-medium text-mist-100" x-text="hotspot.label"></span>
-                            <span class="block truncate text-[10.5px] text-mist-400"
-                                  x-text="hotspot.type === 'link' ? 'Pindah panorama' : (hotspot.description ?? '')"></span>
-                        </span>
-                        <x-icon name="chevron-right" class="size-3.5 shrink-0 text-mist-400"/>
-                    </button>
-                </li>
-            </template>
-        </ul>
-    </div>
-
-    {{-- Alerts + maintenance for this station --}}
-    <div class="glass glass--panel panel-enter shrink-0 p-4" x-sheen>
-        <h3 class="mb-2.5 text-[14px] font-semibold text-white">Riwayat Peringatan &amp; Perawatan</h3>
-
-        <ul class="space-y-2">
-            <template x-for="alert in ($store.viewer.station?.alerts ?? [])" :key="'a' + alert.id">
-                <li class="flex items-start gap-2 text-[11.5px]">
-                    <span class="mt-1 status-dot" :style="`background:${window.statusColor(alert.level)}`"></span>
-                    <div class="min-w-0 flex-1">
-                        <p class="truncate font-medium text-mist-100" x-text="alert.title"></p>
-                        <p class="tnum text-[10.5px] text-mist-400">
-                            <span x-text="alert.triggered_label"></span>
-                            <span x-show="alert.is_resolved" class="text-state-normal"> · selesai</span>
-                        </p>
-                    </div>
-                </li>
-            </template>
-
-            <template x-for="task in ($store.viewer.station?.maintenance ?? [])" :key="'m' + task.title">
-                <li class="flex items-start gap-2 text-[11.5px]">
-                    <x-icon name="wrench" class="mt-0.5 size-3.5 shrink-0 text-mist-400"/>
-                    <div class="min-w-0 flex-1">
-                        <p class="truncate font-medium text-mist-100" x-text="task.title"></p>
-                        <p class="text-[10.5px] text-mist-400">
-                            <span x-text="task.scheduled_for"></span> ·
-                            <span x-text="task.status"></span> ·
-                            <span x-text="task.assignee"></span>
-                        </p>
-                    </div>
-                </li>
-            </template>
-
-            <template x-if="($store.viewer.station?.alerts ?? []).length === 0 && ($store.viewer.station?.maintenance ?? []).length === 0">
-                <li class="text-[11.5px] text-mist-400">Belum ada catatan untuk titik ini.</li>
-            </template>
-        </ul>
-    </div>
 </div>

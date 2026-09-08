@@ -7,6 +7,7 @@ use App\Models\MaintenanceTask;
 use App\Models\Report;
 use App\Models\SensorStation;
 use App\Models\Setting;
+use App\Support\DashboardLayout;
 use App\Services\MonitoringService;
 use Illuminate\Http\Request;
 use Illuminate\View\View;
@@ -20,17 +21,31 @@ class PageController extends Controller
     public function dashboard(): View
     {
         $damId = $this->monitoring->dam()->id;
+        $layouts = [
+            'board' => DashboardLayout::current('board'),
+            'panel' => DashboardLayout::current('panel'),
+        ];
+        $cards = collect($layouts['board'])->keyBy('key');
+
+        // The trend card opens on the station the board was set to, and on
+        // the reservoir gauge until somebody sets one.
+        $lead = $cards['trend']['options']['station'] ?? 'awlr-hulu';
 
         return view('pages.dashboard', [
+            'layouts' => $layouts,
+            'choices' => [
+                'board' => DashboardLayout::choices('board'),
+                'panel' => DashboardLayout::choices('panel'),
+            ],
             'boot' => $this->boot(),
             'dashboard' => $this->monitoring->dashboard(),
             // Chart defaults to the reservoir level series.
             'stationsForChart' => SensorStation::query()
                 ->where('dam_id', $damId)
-                ->whereIn('code', ['awlr-hulu', 'awgc-01', 'awr-01'])
+                ->whereIn('code', array_unique([$lead, 'awlr-hulu', 'awgc-01', 'awr-01']))
                 ->with('metrics')
                 ->get()
-                ->sortBy(fn (SensorStation $station) => $station->code === 'awlr-hulu' ? 0 : 1)
+                ->sortBy(fn (SensorStation $station) => $station->code === $lead ? 0 : 1)
                 ->map(fn (SensorStation $station) => [
                     'code' => $station->code,
                     'name' => $station->name,
@@ -43,7 +58,8 @@ class PageController extends Controller
                 ->where('status', '!=', 'selesai')
                 ->with('station:id,code,name,short_name')
                 ->orderBy('scheduled_for')
-                ->limit(4)
+                // As many rows as the card was set to show.
+                ->limit((int) ($cards['maintenance']['options']['limit'] ?? 4))
                 ->get(),
         ]);
     }
@@ -76,8 +92,16 @@ class PageController extends Controller
 
     public function analytics(): View
     {
+        /*
+        | Only stations that have something to chart. The overview panorama
+        | carries no parameters at all, and offering it left the reader on a
+        | screen with nothing on it and no way to tell whether that was the
+        | station or the app — worse, the choice is remembered, so every later
+        | visit opened blank too.
+        */
         $stations = SensorStation::query()
             ->where('dam_id', $this->monitoring->dam()->id)
+            ->whereHas('metrics')
             ->with('metrics')
             ->orderBy('name')
             ->get()

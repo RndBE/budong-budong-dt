@@ -13,6 +13,7 @@ class SensorMetric extends Model
     protected $guarded = [];
 
     protected $casts = [
+        'states' => 'array',
         'decimals' => 'integer',
         'is_primary' => 'boolean',
         'normal_min' => 'float',
@@ -26,6 +27,23 @@ class SensorMetric extends Model
     public function station(): BelongsTo
     {
         return $this->belongsTo(SensorStation::class, 'sensor_station_id');
+    }
+
+    /**
+     * The word a state metric's number stands for.
+     *
+     * A reading is always a number; "Kondisi Pintu" is a word. The metric
+     * carries the map, so the series still charts and still has thresholds
+     * while the panels print something a person can read. Null for the
+     * ordinary quantities, which have nothing to look up.
+     */
+    public function stateLabel(?float $value): ?string
+    {
+        if ($value === null || ! $this->states) {
+            return null;
+        }
+
+        return $this->states[(string) (int) round($value)] ?? null;
     }
 
     /** Classify a value against this metric's thresholds. */

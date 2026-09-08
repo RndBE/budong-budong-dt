@@ -78,6 +78,13 @@ function watchSize(element, echarts) {
     }).observe(element);
 }
 
+/*
+| Everything else that moves in this app asks first; a chart drawing itself
+| across the screen is no different.
+*/
+const stillness = () => typeof window !== 'undefined'
+    && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+
 const PALETTE = ['#47a6ff', '#34d399', '#fbbf24', '#c084fc', '#fb923c', '#38bdf8'];
 
 const areaGradient = (echarts, color) =>
@@ -86,12 +93,29 @@ const areaGradient = (echarts, color) =>
         { offset: 1, color: `${color}00` },
     ]);
 
+/**
+ * A chart needs somewhere to live.
+ *
+ * `echarts.init(undefined)` reads `getAttribute` off it and throws a message
+ * that names nothing, which is a long way from the caller that lost its
+ * element. Fail here instead, saying what happened.
+ */
+function surface(element, who) {
+    if (!element || !element.nodeType) {
+        throw new Error(`Tidak ada elemen untuk grafik ${who}.`);
+    }
+
+    return element;
+}
+
 function toPairs(points) {
     return points.map((point) => [point.t, point.v]);
 }
 
 /** Compact trend line used inside the station metric cards. */
 export async function sparkline(element, points, options = {}) {
+    surface(element, 'sparkline');
+
     const echarts = await loadEngine();
     const color = options.color ?? PALETTE[0];
     const chart = echarts.getInstanceByDom(element) ?? echarts.init(element, null, { renderer: 'canvas' });
@@ -100,7 +124,11 @@ export async function sparkline(element, points, options = {}) {
 
     chart.setOption(
         {
+            animation: ! stillness(),
             animationDuration: 420,
+            animationEasing: 'cubicOut',
+            animationDurationUpdate: 320,
+            animationEasingUpdate: 'cubicInOut',
             grid: { top: 6, right: 4, bottom: 4, left: 4 },
             xAxis: { type: 'time', show: false },
             yAxis: { type: 'value', show: false, scale: true },
@@ -133,6 +161,8 @@ export async function sparkline(element, points, options = {}) {
 
 /** Full chart with thresholds, used on the analytics page. */
 export async function seriesChart(element, datasets, options = {}) {
+    surface(element, 'seri');
+
     const echarts = await loadEngine();
     const chart = echarts.getInstanceByDom(element) ?? echarts.init(element, null, { renderer: 'canvas' });
 
@@ -154,7 +184,19 @@ export async function seriesChart(element, datasets, options = {}) {
     chart.setOption(
         {
             color: PALETTE,
-            animationDuration: 520,
+            /*
+            | Arriving and changing are two different movements. A chart is
+            | rebuilt with `notMerge` whenever the picked parameters change, so
+            | without an update pair every swap replayed the full entrance —
+            | the picture snapped rather than moved. The entrance eases out
+            | (fast, then settling); a change eases both ends, because the eye
+            | is already on the line and a hard start reads as a flicker.
+            */
+            animation: ! stillness(),
+            animationDuration: 560,
+            animationEasing: 'cubicOut',
+            animationDurationUpdate: 420,
+            animationEasingUpdate: 'cubicInOut',
             // A card in the grid is a fifth the height of the detail chart, so
             // it cannot spend 44px on a zoom slider it does not have.
             grid: options.compact
@@ -215,6 +257,15 @@ export async function seriesChart(element, datasets, options = {}) {
                 type: dataset.type === 'bar' ? 'bar' : 'line',
                 yAxisIndex: dataset.axis ?? 0,
                 data: toPairs(dataset.points ?? []),
+                /*
+                | The line draws itself left to right rather than appearing
+                | whole: a point every couple of milliseconds, capped so a
+                | thirty-day series does not take a second and a half to
+                | arrive. A second series follows the first by a beat, which is
+                | what makes two of them read as two.
+                */
+                animationDelay: (point) => Math.min(point * 1.6, 320) + index * 90,
+                animationDelayUpdate: (point) => Math.min(point * 0.8, 160),
                 smooth: 0.3,
                 symbol: 'none',
                 lineStyle: { width: 2 },

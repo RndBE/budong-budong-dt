@@ -15,34 +15,104 @@ use Illuminate\Database\Seeder;
  */
 class StationSeeder extends Seeder
 {
+    /**
+     * The three channels every logger reports about itself.
+     *
+     * Not what the instrument measures — what the box measures about its own
+     * condition. A flat battery or a humid enclosure is the reason a station
+     * stops reporting, and it shows up here days before it does anywhere else,
+     * so every station that has a logger carries them.
+     *
+     * Named `logger_*` because a weather station already reports the air's
+     * temperature and humidity, and those are a different thing entirely.
+     */
+    private const LOGGER_METRICS = [
+        ['key' => 'logger_battery', 'label' => 'Baterai Logger', 'unit' => 'V', 'decimals' => 2, 'normal_min' => 11.8, 'normal_max' => 14.6],
+        ['key' => 'logger_temperature', 'label' => 'Suhu Logger', 'unit' => '°C', 'decimals' => 1, 'normal_min' => 5, 'normal_max' => 55, 'warning_threshold' => 60, 'alert_threshold' => 70],
+        ['key' => 'logger_humidity', 'label' => 'Kelembapan Logger', 'unit' => '%', 'decimals' => 1, 'normal_min' => 0, 'normal_max' => 75, 'warning_threshold' => 85, 'alert_threshold' => 95],
+    ];
+
+    /**
+     * Hotspot ids kept by this run, per station.
+     *
+     * @var array<int, list<int>>
+     */
+    private array $keptHotspots = [];
+
+    /**
+     * Where the markers actually are, if anybody has exported it.
+     *
+     * The catalogue below carries angles read off the renders, which are not
+     * surveyed — estimates, and said to be. This file carries the corrections
+     * somebody made on the stage (`php artisan placements:export`), so a fresh
+     * install comes up with the survey rather than with the guess.
+     *
+     * @var array<string, array<string, mixed>>
+     */
+    private array $placements = [];
+
     public function run(): void
     {
         $dam = Dam::query()->where('code', 'budong-budong')->firstOrFail();
+        $keptStations = [];
+        $exported = database_path('seeders/data/placements.php');
+        $this->placements = is_file($exported) ? (array) require $exported : [];
 
         foreach ($this->catalogue() as $definition) {
             $metrics = $definition['metrics'] ?? [];
             $hotspots = $definition['hotspots'] ?? [];
             unset($definition['metrics'], $definition['hotspots']);
 
-            /** @var SensorStation $station */
-            $station = SensorStation::query()->updateOrCreate(
-                ['code' => $definition['code']],
-                $definition + ['dam_id' => $dam->id],
-            );
+            $placed = $this->placements[$definition['code']] ?? [];
 
-            foreach (array_values($metrics) as $index => $metric) {
+            /** @var SensorStation $station */
+            $station = SensorStation::query()->firstOrNew(['code' => $definition['code']]);
+
+            /*
+            | Where a pin sits in the base panorama is placement, not
+            | catalogue, so it is written once when the row is new and never
+            | again — the same rule the hotspots follow. Dragging a pin on the
+            | stage must survive the next seed.
+            */
+            if (! $station->exists && isset($placed['sphere'])) {
+                $station->forceFill([
+                    'sphere_yaw' => $placed['sphere']['yaw'],
+                    'sphere_pitch' => $placed['sphere']['pitch'],
+                ]);
+            }
+
+            $station->fill($definition + ['dam_id' => $dam->id])->save();
+
+            /*
+            | The logger's own channels come after the instrument's, on every
+            | station that has any at all — the overview panorama has no box on
+            | a pole, and giving it three parameters would put it in the
+            | analytics station list with nothing to draw.
+            */
+            $catalogue = array_values($metrics);
+
+            if ($catalogue !== []) {
+                $catalogue = array_merge($catalogue, self::LOGGER_METRICS);
+            }
+
+            foreach ($catalogue as $index => $metric) {
                 SensorMetric::query()->updateOrCreate(
                     ['sensor_station_id' => $station->id, 'key' => $metric['key']],
                     $metric + ['sort_order' => $index],
                 );
             }
 
-            $station->hotspots()->delete();
+            // A parameter the catalogue no longer lists is gone, along with
+            // its readings — the same rule the hotspots follow below.
+            SensorMetric::query()
+                ->where('sensor_station_id', $station->id)
+                ->whereNotIn('key', array_column($catalogue, 'key'))
+                ->delete();
+
+            $keptStations[] = $station->id;
+
             foreach (array_values($hotspots) as $index => $hotspot) {
-                PanoramaHotspot::query()->create($hotspot + [
-                    'sensor_station_id' => $station->id,
-                    'sort_order' => $index,
-                ]);
+                $this->hotspot($station, $hotspot, $index, $placed['hotspots'] ?? []);
             }
         }
 
@@ -58,26 +128,100 @@ class StationSeeder extends Seeder
 
         foreach ($links as $code => $definitions) {
             $station = SensorStation::query()->where('code', $code)->first();
-            $order = $station?->hotspots()->count() ?? 0;
 
-            foreach ($definitions as $definition) {
+            foreach (array_values($definitions) as $index => $definition) {
                 $target = SensorStation::query()->where('code', $definition['target'])->first();
 
                 if (! $station || ! $target) {
                     continue;
                 }
 
-                PanoramaHotspot::query()->create([
-                    'sensor_station_id' => $station->id,
+                // Links sort after the instruments, whatever the catalogue holds.
+                $this->hotspot($station, [
                     'target_station_id' => $target->id,
                     'type' => 'link',
                     'label' => $definition['label'],
                     'yaw' => $definition['yaw'],
                     'pitch' => $definition['pitch'],
-                    'sort_order' => $order++,
-                ]);
+                ], 90 + $index, $this->placements[$code]['hotspots'] ?? []);
             }
         }
+
+        /*
+        | A station the catalogue no longer lists is gone too, and everything
+        | hanging off it with it: readings, metrics and hotspots cascade, while
+        | alerts and maintenance jobs keep their history with a null station.
+        | Without this a renamed or retired point stayed on the stage for ever,
+        | because nothing else ever deletes one.
+        */
+        SensorStation::query()
+            ->where('dam_id', $dam->id)
+            ->whereNotIn('id', $keptStations)
+            ->delete();
+
+        // Anything this run did not touch is no longer in the catalogue.
+        foreach ($this->keptHotspots as $stationId => $ids) {
+            PanoramaHotspot::query()
+                ->where('sensor_station_id', $stationId)
+                ->whereNotIn('id', $ids)
+                ->delete();
+        }
+    }
+
+    /**
+     * Upsert one hotspot, matched on its label.
+     *
+     * The angles are written only when the row is created: a prism or an
+     * instrument can be dragged onto its real spot from the stage, and a
+     * re-seed must not throw that placement away. Everything else — label
+     * copy, description, the metric it reads — is refreshed from the
+     * catalogue, which is where those belong.
+     */
+    private function hotspot(SensorStation $station, array $hotspot, int $order, array $placed = []): void
+    {
+        // The exported placement wins over the catalogue's estimate, but only
+        // as the value a *new* row starts at.
+        $exported = $placed[$hotspot['label']] ?? [];
+        $position = [
+            'yaw' => $exported['yaw'] ?? $hotspot['yaw'],
+            'pitch' => $exported['pitch'] ?? $hotspot['pitch'],
+        ];
+        unset($hotspot['yaw'], $hotspot['pitch']);
+
+        $record = PanoramaHotspot::query()->firstOrNew([
+            'sensor_station_id' => $station->id,
+            'label' => $hotspot['label'],
+        ]);
+
+        // Where somebody nudged a single stake is placement work, the same as
+        // the row's own angles, so the catalogue's `meta` must not carry it
+        // away when the copy is refreshed.
+        if (isset($hotspot['meta'])) {
+            $places = $record->meta['places'] ?? ($record->exists ? null : $exported['places'] ?? null);
+
+            if ($places) {
+                $hotspot['meta']['places'] = $places;
+            }
+        }
+
+        // Defaults as well as the values: a hotspot that used to carry a
+        // description or a metric must not keep it once the catalogue drops it.
+        $record->fill($hotspot + [
+            'sort_order' => $order,
+            'type' => 'metric',
+            'description' => null,
+            'metric_key' => null,
+            'target_station_id' => null,
+            'meta' => null,
+        ]);
+
+        if (! $record->exists) {
+            $record->fill($position);
+        }
+
+        $record->save();
+
+        $this->keptHotspots[$station->id][] = $record->id;
     }
 
     /** @return list<array<string, mixed>> */
@@ -117,6 +261,7 @@ class StationSeeder extends Seeder
                 'map_x' => 22.1,
                 'map_y' => 59.8,
                 'panorama' => 'awlr-hulu',
+                'panorama_bearing' => 351,
                 'vendor' => 'Beacon Engineering',
                 'model' => 'BE-WLR-100-U150',
                 'telemetry_channel' => 'AWLR-HULU',
@@ -127,6 +272,9 @@ class StationSeeder extends Seeder
                     ['key' => 'water_level', 'label' => 'Muka Air Waduk', 'unit' => 'mdpl', 'decimals' => 3, 'is_primary' => true, 'chart_type' => 'area', 'normal_min' => 88.0, 'normal_max' => 95.5, 'warning_threshold' => 95.8, 'alert_threshold' => 96.6, 'critical_threshold' => 97.4],
                     ['key' => 'inflow', 'label' => 'Inflow (Qin)', 'unit' => 'm³/s', 'decimals' => 2, 'chart_type' => 'area', 'normal_min' => 0, 'normal_max' => 80, 'warning_threshold' => 90, 'alert_threshold' => 130, 'critical_threshold' => 180],
                     ['key' => 'storage_volume', 'label' => 'Volume Tampungan', 'unit' => 'juta m³', 'decimals' => 2, 'normal_min' => 20, 'normal_max' => 70],
+                    ['key' => 'water_depth', 'label' => 'Kedalaman Air', 'unit' => 'm', 'decimals' => 2, 'normal_min' => 4, 'normal_max' => 14],
+                    ['key' => 'raw_reading', 'label' => 'Bacaan Sensor Mentah', 'unit' => 'mm', 'decimals' => 0, 'normal_min' => 0, 'normal_max' => 15000],
+                    ['key' => 'sensor_status', 'label' => 'Status Sensor', 'unit' => 'status', 'decimals' => 0, 'chart_type' => 'bar', 'states' => ['0' => 'Normal', '1' => 'Peringatan', '2' => 'Gangguan'], 'normal_min' => 0, 'normal_max' => 0, 'warning_threshold' => 1, 'alert_threshold' => 2],
                 ],
                 'hotspots' => [
                     ['type' => 'metric', 'label' => 'Sensor Radar AWLR', 'metric_key' => 'water_level', 'description' => 'Radar level 24 GHz, akurasi ±3 mm.', 'yaw' => 8, 'pitch' => -14],
@@ -145,6 +293,7 @@ class StationSeeder extends Seeder
                 'map_x' => 62.0,
                 'map_y' => 78.0,
                 'panorama' => 'awlr-hilir',
+                'panorama_bearing' => 18,
                 'vendor' => 'Beacon Engineering',
                 'model' => 'BE-WLR-100-U150',
                 'telemetry_channel' => 'AWLR-HILIR',
@@ -153,6 +302,9 @@ class StationSeeder extends Seeder
                 'metrics' => [
                     ['key' => 'water_level', 'label' => 'Muka Air Sungai', 'unit' => 'mdpl', 'decimals' => 3, 'is_primary' => true, 'chart_type' => 'area', 'normal_min' => 26.0, 'normal_max' => 29.5, 'warning_threshold' => 30.0, 'alert_threshold' => 31.0, 'critical_threshold' => 32.0],
                     ['key' => 'discharge', 'label' => 'Debit Sungai', 'unit' => 'm³/s', 'decimals' => 2, 'chart_type' => 'area', 'normal_min' => 0, 'normal_max' => 70, 'warning_threshold' => 90, 'alert_threshold' => 130],
+                    ['key' => 'water_depth', 'label' => 'Kedalaman Air', 'unit' => 'm', 'decimals' => 2, 'normal_min' => 0.5, 'normal_max' => 4.5],
+                    ['key' => 'raw_reading', 'label' => 'Bacaan Sensor Mentah', 'unit' => 'mm', 'decimals' => 0, 'normal_min' => 0, 'normal_max' => 6000],
+                    ['key' => 'sensor_status', 'label' => 'Status Sensor', 'unit' => 'status', 'decimals' => 0, 'chart_type' => 'bar', 'states' => ['0' => 'Normal', '1' => 'Peringatan', '2' => 'Gangguan'], 'normal_min' => 0, 'normal_max' => 0, 'warning_threshold' => 1, 'alert_threshold' => 2],
                 ],
                 'hotspots' => [
                     ['type' => 'metric', 'label' => 'Stasiun AWLR Hilir', 'metric_key' => 'water_level', 'yaw' => 14, 'pitch' => -12],
@@ -171,6 +323,7 @@ class StationSeeder extends Seeder
                 'map_x' => 47.0,
                 'map_y' => 52.0,
                 'panorama' => 'awgc-01',
+                'panorama_bearing' => 352,
                 'vendor' => 'Beacon Engineering',
                 'model' => 'BE-AWGC-3G',
                 'telemetry_channel' => 'AWGC-01',
@@ -178,48 +331,138 @@ class StationSeeder extends Seeder
                 'description' => 'Monitoring bukaan pintu dan debit limpasan pelimpah, termasuk tinggi limpasan di atas ambang.',
                 'metrics' => [
                     ['key' => 'discharge', 'label' => 'Outflow (Qout)', 'unit' => 'm³/s', 'decimals' => 2, 'is_primary' => true, 'chart_type' => 'area', 'normal_min' => 0, 'normal_max' => 70, 'warning_threshold' => 90, 'alert_threshold' => 130, 'critical_threshold' => 180],
-                    ['key' => 'gate_opening', 'label' => 'Bukaan Pintu', 'unit' => '%', 'decimals' => 1, 'chart_type' => 'bar', 'normal_min' => 0, 'normal_max' => 100],
+                    ['key' => 'gate_opening', 'label' => 'Bukaan Pintu', 'unit' => 'cm', 'decimals' => 1, 'chart_type' => 'bar', 'normal_min' => 0, 'normal_max' => 100],
                     ['key' => 'head_over_crest', 'label' => 'Tinggi Limpasan', 'unit' => 'm', 'decimals' => 3, 'normal_min' => 0, 'normal_max' => 1.5, 'warning_threshold' => 2.0, 'alert_threshold' => 2.6],
+                    ['key' => 'pool_level', 'label' => 'Tinggi Muka Air', 'unit' => 'mdpl', 'decimals' => 3, 'chart_type' => 'area', 'normal_min' => 88.0, 'normal_max' => 95.5, 'warning_threshold' => 95.8, 'alert_threshold' => 96.6],
+                    ['key' => 'gate_target', 'label' => 'Target Pintu', 'unit' => 'cm', 'decimals' => 1, 'normal_min' => 0, 'normal_max' => 100],
+                    ['key' => 'gate_opening_1', 'label' => 'Bukaan Pintu 1', 'unit' => 'cm', 'decimals' => 1, 'chart_type' => 'area', 'normal_min' => 0, 'normal_max' => 100],
+                    ['key' => 'gate_opening_2', 'label' => 'Bukaan Pintu 2', 'unit' => 'cm', 'decimals' => 1, 'chart_type' => 'area', 'normal_min' => 0, 'normal_max' => 100],
+                    ['key' => 'gate_opening_3', 'label' => 'Bukaan Pintu 3', 'unit' => 'cm', 'decimals' => 1, 'chart_type' => 'area', 'normal_min' => 0, 'normal_max' => 100],
+                    ['key' => 'gate_target_1', 'label' => 'Target Pintu 1', 'unit' => 'cm', 'decimals' => 1, 'normal_min' => 0, 'normal_max' => 100],
+                    ['key' => 'gate_target_2', 'label' => 'Target Pintu 2', 'unit' => 'cm', 'decimals' => 1, 'normal_min' => 0, 'normal_max' => 100],
+                    ['key' => 'gate_target_3', 'label' => 'Target Pintu 3', 'unit' => 'cm', 'decimals' => 1, 'normal_min' => 0, 'normal_max' => 100],
+                    ['key' => 'gate_current_r_1', 'label' => 'Arus R Pintu 1', 'unit' => 'A', 'decimals' => 2, 'normal_min' => 0, 'normal_max' => 12, 'warning_threshold' => 14, 'alert_threshold' => 18],
+                    ['key' => 'gate_current_s_1', 'label' => 'Arus S Pintu 1', 'unit' => 'A', 'decimals' => 2, 'normal_min' => 0, 'normal_max' => 12, 'warning_threshold' => 14, 'alert_threshold' => 18],
+                    ['key' => 'gate_current_t_1', 'label' => 'Arus T Pintu 1', 'unit' => 'A', 'decimals' => 2, 'normal_min' => 0, 'normal_max' => 12, 'warning_threshold' => 14, 'alert_threshold' => 18],
+                    ['key' => 'gate_current_r_2', 'label' => 'Arus R Pintu 2', 'unit' => 'A', 'decimals' => 2, 'normal_min' => 0, 'normal_max' => 12, 'warning_threshold' => 14, 'alert_threshold' => 18],
+                    ['key' => 'gate_current_s_2', 'label' => 'Arus S Pintu 2', 'unit' => 'A', 'decimals' => 2, 'normal_min' => 0, 'normal_max' => 12, 'warning_threshold' => 14, 'alert_threshold' => 18],
+                    ['key' => 'gate_current_t_2', 'label' => 'Arus T Pintu 2', 'unit' => 'A', 'decimals' => 2, 'normal_min' => 0, 'normal_max' => 12, 'warning_threshold' => 14, 'alert_threshold' => 18],
+                    ['key' => 'gate_current_r_3', 'label' => 'Arus R Pintu 3', 'unit' => 'A', 'decimals' => 2, 'normal_min' => 0, 'normal_max' => 12, 'warning_threshold' => 14, 'alert_threshold' => 18],
+                    ['key' => 'gate_current_s_3', 'label' => 'Arus S Pintu 3', 'unit' => 'A', 'decimals' => 2, 'normal_min' => 0, 'normal_max' => 12, 'warning_threshold' => 14, 'alert_threshold' => 18],
+                    ['key' => 'gate_current_t_3', 'label' => 'Arus T Pintu 3', 'unit' => 'A', 'decimals' => 2, 'normal_min' => 0, 'normal_max' => 12, 'warning_threshold' => 14, 'alert_threshold' => 18],
+                    ['key' => 'motor_status', 'label' => 'Kondisi Motor', 'unit' => 'status', 'decimals' => 0, 'chart_type' => 'bar', 'states' => ['0' => 'Mati', '1' => 'Berjalan', '2' => 'Gangguan'], 'normal_min' => 0, 'normal_max' => 1, 'warning_threshold' => 2],
+                    ['key' => 'gate_status', 'label' => 'Kondisi Pintu', 'unit' => 'status', 'decimals' => 0, 'chart_type' => 'bar', 'states' => ['0' => 'Tertutup', '1' => 'Bergerak', '2' => 'Terbuka'], 'normal_min' => 0, 'normal_max' => 2],
                 ],
                 'hotspots' => [
                     ['type' => 'metric', 'label' => 'Rumah Hoist Pintu', 'metric_key' => 'gate_opening', 'description' => 'Tiga pintu radial dengan aktuator hidrolik.', 'yaw' => -6, 'pitch' => -2],
+                    /*
+                    | One marker per leaf, on the bay it belongs to. The angles
+                    | are an estimate off the render — the spillway is not
+                    | surveyed — so they are meant to be dragged onto the real
+                    | bays from the stage, which is what the placement control
+                    | is for. `height_cm` is the stroke, and it is what turns a
+                    | percentage into the figure an operator opens a gate by.
+                    */
+                    ['type' => 'gate', 'label' => 'Pintu 1', 'metric_key' => 'gate_opening_1', 'description' => 'Pintu radial kiri; aktuator hidrolik, langkah penuh 100 cm.', 'yaw' => -13, 'pitch' => -13, 'meta' => ['gate' => 1, 'height_cm' => 100, 'cell_yaw' => 5.4, 'cell_pitch' => 6.2]],
+                    ['type' => 'gate', 'label' => 'Pintu 2', 'metric_key' => 'gate_opening_2', 'description' => 'Pintu radial tengah; aktuator hidrolik, langkah penuh 100 cm.', 'yaw' => -5, 'pitch' => -13, 'meta' => ['gate' => 2, 'height_cm' => 100, 'cell_yaw' => 5.4, 'cell_pitch' => 6.2]],
+                    ['type' => 'gate', 'label' => 'Pintu 3', 'metric_key' => 'gate_opening_3', 'description' => 'Pintu radial kanan; aktuator hidrolik, langkah penuh 100 cm.', 'yaw' => 3, 'pitch' => -13, 'meta' => ['gate' => 3, 'height_cm' => 100, 'cell_yaw' => 5.4, 'cell_pitch' => 6.2]],
                     ['type' => 'info', 'label' => 'Saluran Peluncur', 'description' => 'Chute beton dengan stilling basin di ujung hilir.', 'yaw' => 42, 'pitch' => -22],
                 ],
             ],
             [
-                'code' => 'awlr-awqr-sedimen',
-                'name' => 'AWLR, AWQR & Sedimen Sungai',
-                'short_name' => 'AWQR Sungai',
+                'code' => 'awqr-bendungan',
+                'name' => 'AWQR Bendungan',
+                'short_name' => 'AWQR Bendungan',
                 'type' => 'water_quality',
                 'group' => 'hidrologi',
-                'zone' => 'Hulu Sungai',
+                'zone' => 'Inlet Waduk',
                 'latitude' => -1.9418,
                 'longitude' => 119.3521,
                 'elevation' => 27.360,
                 'map_x' => 79.3,
                 'map_y' => 22.7,
                 'panorama' => 'awlr-awqr-sedimen',
+                'panorama_bearing' => 44,
                 'vendor' => 'Beacon Engineering',
                 'model' => 'BE-AWQR-5P',
                 'telemetry_channel' => 'AWQR-01',
                 'installed_on' => '2024-11-08',
-                'description' => 'Stasiun gabungan muka air, kualitas air, dan muatan sedimen di sungai masuk waduk.',
+                'description' => 'Sonde multiparameter kualitas air pada inlet waduk.',
                 'metrics' => [
                     ['key' => 'turbidity', 'label' => 'Kekeruhan', 'unit' => 'NTU', 'decimals' => 1, 'is_primary' => true, 'chart_type' => 'area', 'normal_min' => 0, 'normal_max' => 25, 'warning_threshold' => 40, 'alert_threshold' => 80, 'critical_threshold' => 150],
-                    ['key' => 'water_level', 'label' => 'Muka Air Sungai', 'unit' => 'mdpl', 'decimals' => 3, 'normal_min' => 24, 'normal_max' => 30.5],
                     ['key' => 'ph', 'label' => 'pH', 'unit' => '', 'decimals' => 2, 'normal_min' => 6.5, 'normal_max' => 8.5],
                     ['key' => 'dissolved_oxygen', 'label' => 'Oksigen Terlarut', 'unit' => 'mg/L', 'decimals' => 2, 'normal_min' => 5, 'normal_max' => 9],
-                    ['key' => 'sediment_load', 'label' => 'Muatan Sedimen', 'unit' => 'mg/L', 'decimals' => 1, 'chart_type' => 'bar', 'normal_min' => 0, 'normal_max' => 150, 'warning_threshold' => 220, 'alert_threshold' => 350],
                 ],
                 'hotspots' => [
                     ['type' => 'metric', 'label' => 'Sonde Multiparameter', 'metric_key' => 'turbidity', 'yaw' => -12, 'pitch' => -16],
+                ],
+            ],
+            /*
+            | The three instruments on the inlet used to be one record called
+            | "AWLR, AWQR & Sedimen". They are three loggers on one structure,
+            | so they are three stations that happen to share a panorama — a
+            | reader opening "Sedimen Bendungan" should get sediment, not a
+            | station named after two other things as well.
+            */
+            [
+                'code' => 'awlr-bendungan',
+                'name' => 'AWLR Bendungan',
+                'short_name' => 'AWLR Bendungan',
+                'type' => 'water_level',
+                'group' => 'hidrologi',
+                'zone' => 'Inlet Waduk',
+                'latitude' => -1.9420,
+                'longitude' => 119.3518,
+                'elevation' => 27.360,
+                'map_x' => 76.5,
+                'map_y' => 24.1,
+                'panorama' => 'awlr-awqr-sedimen',
+                'panorama_bearing' => 44,
+                'vendor' => 'Beacon Engineering',
+                'model' => 'BE-WLR-100-U150',
+                'telemetry_channel' => 'AWLR-BDG',
+                'installed_on' => '2024-11-08',
+                'description' => 'Radar muka air pada inlet waduk, pasangan AWQR dan sampler sedimen.',
+                'metrics' => [
+                    ['key' => 'water_level', 'label' => 'Muka Air Sungai', 'unit' => 'mdpl', 'decimals' => 3, 'is_primary' => true, 'chart_type' => 'area', 'normal_min' => 24, 'normal_max' => 30.5, 'warning_threshold' => 31.2, 'alert_threshold' => 32.4],
+                    ['key' => 'water_depth', 'label' => 'Kedalaman Air', 'unit' => 'm', 'decimals' => 2, 'normal_min' => 0.5, 'normal_max' => 6],
+                    ['key' => 'raw_reading', 'label' => 'Bacaan Sensor Mentah', 'unit' => 'mm', 'decimals' => 0, 'normal_min' => 0, 'normal_max' => 15000],
+                ],
+                'hotspots' => [
+                    ['type' => 'metric', 'label' => 'Radar Muka Air', 'metric_key' => 'water_level', 'yaw' => 26, 'pitch' => -15],
+                ],
+            ],
+            [
+                'code' => 'sedimen-bendungan',
+                'name' => 'Sedimen Bendungan',
+                'short_name' => 'Sedimen Bendungan',
+                'type' => 'water_quality',
+                'group' => 'hidrologi',
+                'zone' => 'Inlet Waduk',
+                'latitude' => -1.9416,
+                'longitude' => 119.3524,
+                'elevation' => 27.360,
+                'map_x' => 82.1,
+                'map_y' => 24.6,
+                'panorama' => 'awlr-awqr-sedimen',
+                'panorama_bearing' => 44,
+                'vendor' => 'Beacon Engineering',
+                'model' => 'BE-SED-2A',
+                'telemetry_channel' => 'SED-BDG',
+                'installed_on' => '2024-11-08',
+                'description' => 'Sampler muatan sedimen pada inlet waduk.',
+                'metrics' => [
+                    ['key' => 'sediment_load', 'label' => 'Muatan Sedimen', 'unit' => 'mg/L', 'decimals' => 1, 'is_primary' => true, 'chart_type' => 'bar', 'normal_min' => 0, 'normal_max' => 150, 'warning_threshold' => 220, 'alert_threshold' => 350],
+                    ['key' => 'turbidity', 'label' => 'Kekeruhan', 'unit' => 'NTU', 'decimals' => 1, 'chart_type' => 'area', 'normal_min' => 0, 'normal_max' => 25, 'warning_threshold' => 40, 'alert_threshold' => 80],
+                ],
+                'hotspots' => [
                     ['type' => 'metric', 'label' => 'Sampler Sedimen', 'metric_key' => 'sediment_load', 'yaw' => 96, 'pitch' => -14],
                 ],
             ],
             [
                 'code' => 'awr-01',
-                'name' => 'AWR — Stasiun Cuaca Otomatis',
-                'short_name' => 'AWR / Pos Hujan',
+                'name' => 'AWR',
+                'short_name' => 'AWR',
                 'type' => 'weather',
                 'group' => 'hidrologi',
                 'zone' => 'Kantor OP',
@@ -229,6 +472,7 @@ class StationSeeder extends Seeder
                 'map_x' => 27.9,
                 'map_y' => 36.5,
                 'panorama' => 'awr-01',
+                'panorama_bearing' => 340,
                 'vendor' => 'Beacon Engineering',
                 'model' => 'BE-AWS-6S',
                 'telemetry_channel' => 'AWR-01',
@@ -240,8 +484,11 @@ class StationSeeder extends Seeder
                     ['key' => 'rainfall_intensity', 'label' => 'Intensitas Hujan', 'unit' => 'mm/jam', 'decimals' => 1, 'chart_type' => 'bar', 'normal_min' => 0, 'normal_max' => 20, 'warning_threshold' => 30, 'alert_threshold' => 50],
                     ['key' => 'temperature', 'label' => 'Suhu Udara', 'unit' => '°C', 'decimals' => 1, 'normal_min' => 18, 'normal_max' => 36],
                     ['key' => 'humidity', 'label' => 'Kelembapan', 'unit' => '%', 'decimals' => 0, 'normal_min' => 40, 'normal_max' => 99],
-                    ['key' => 'wind_speed', 'label' => 'Kecepatan Angin', 'unit' => 'km/jam', 'decimals' => 1, 'normal_min' => 0, 'normal_max' => 45, 'warning_threshold' => 55],
+                    ['key' => 'wind_speed', 'label' => 'Kecepatan Angin', 'unit' => 'm/s', 'decimals' => 1, 'normal_min' => 0, 'normal_max' => 12, 'warning_threshold' => 15],
                     ['key' => 'solar_radiation', 'label' => 'Radiasi Matahari', 'unit' => 'W/m²', 'decimals' => 0, 'normal_min' => 0, 'normal_max' => 1100],
+                    ['key' => 'wind_direction', 'label' => 'Arah Angin', 'unit' => '°', 'decimals' => 0, 'normal_min' => 0, 'normal_max' => 360],
+                    ['key' => 'air_pressure', 'label' => 'Tekanan Udara', 'unit' => 'mbar', 'decimals' => 1, 'normal_min' => 1000, 'normal_max' => 1018],
+                    ['key' => 'illuminance', 'label' => 'Iluminasi', 'unit' => 'lux', 'decimals' => 0, 'chart_type' => 'area', 'normal_min' => 0, 'normal_max' => 110000],
                 ],
                 'hotspots' => [
                     ['type' => 'metric', 'label' => 'Anemometer & Wind Vane', 'metric_key' => 'wind_speed', 'yaw' => 4, 'pitch' => 6],
@@ -262,6 +509,7 @@ class StationSeeder extends Seeder
                 'map_x' => 82.6,
                 'map_y' => 37.3,
                 'panorama' => 'adr-01',
+                'panorama_bearing' => 356,
                 'vendor' => 'Leica Geosystems',
                 'model' => 'TM50 + BE-ADR Controller',
                 'telemetry_channel' => 'ADR-01',
@@ -273,6 +521,12 @@ class StationSeeder extends Seeder
                     ['key' => 'displacement_v', 'label' => 'Pergeseran Vertikal', 'unit' => 'mm', 'decimals' => 2, 'normal_min' => -8, 'normal_max' => 8, 'warning_threshold' => 10, 'alert_threshold' => 15],
                     ['key' => 'prisms_measured', 'label' => 'Prisma Terukur', 'unit' => 'titik', 'decimals' => 0, 'chart_type' => 'bar', 'normal_min' => 38, 'normal_max' => 48],
                     ['key' => 'cycle_duration', 'label' => 'Durasi Siklus', 'unit' => 'menit', 'decimals' => 1, 'normal_min' => 5, 'normal_max' => 20],
+                    ['key' => 'distance', 'label' => 'Jarak ke Prisma', 'unit' => 'm', 'decimals' => 3, 'normal_min' => 120, 'normal_max' => 480],
+                    ['key' => 'angle_h', 'label' => 'Sudut Horizontal', 'unit' => '°', 'decimals' => 4, 'normal_min' => 0, 'normal_max' => 360],
+                    ['key' => 'angle_v', 'label' => 'Sudut Vertikal', 'unit' => '°', 'decimals' => 4, 'normal_min' => 60, 'normal_max' => 120],
+                    ['key' => 'coord_e', 'label' => 'Koordinat Easting', 'unit' => 'm', 'decimals' => 3, 'normal_min' => 700000, 'normal_max' => 720000],
+                    ['key' => 'coord_n', 'label' => 'Koordinat Northing', 'unit' => 'm', 'decimals' => 3, 'normal_min' => 9760000, 'normal_max' => 9790000],
+                    ['key' => 'coord_h', 'label' => 'Koordinat Elevasi', 'unit' => 'm', 'decimals' => 3, 'normal_min' => 80, 'normal_max' => 130],
                 ],
                 'hotspots' => [
                     ['type' => 'metric', 'label' => 'Total Station', 'metric_key' => 'displacement_h', 'description' => 'Presisi sudut 0,5"; jangkauan prisma 3.500 m.', 'yaw' => 2, 'pitch' => -8],
@@ -292,6 +546,7 @@ class StationSeeder extends Seeder
                 'map_x' => 28.0,
                 'map_y' => 27.0,
                 'panorama' => 'adr-02',
+                'panorama_bearing' => 0,
                 'vendor' => 'Leica Geosystems',
                 'model' => 'TM50 + BE-ADR Controller',
                 'telemetry_channel' => 'ADR-02',
@@ -303,9 +558,21 @@ class StationSeeder extends Seeder
                     ['key' => 'displacement_v', 'label' => 'Pergeseran Vertikal', 'unit' => 'mm', 'decimals' => 2, 'normal_min' => -8, 'normal_max' => 8, 'warning_threshold' => 1.9, 'alert_threshold' => 2.4, 'critical_threshold' => 12],
                     ['key' => 'prisms_measured', 'label' => 'Prisma Terukur', 'unit' => 'titik', 'decimals' => 0, 'chart_type' => 'bar', 'normal_min' => 38, 'normal_max' => 48],
                     ['key' => 'cycle_duration', 'label' => 'Durasi Siklus', 'unit' => 'menit', 'decimals' => 1, 'normal_min' => 5, 'normal_max' => 20],
+                    ['key' => 'distance', 'label' => 'Jarak ke Prisma', 'unit' => 'm', 'decimals' => 3, 'normal_min' => 120, 'normal_max' => 480],
+                    ['key' => 'angle_h', 'label' => 'Sudut Horizontal', 'unit' => '°', 'decimals' => 4, 'normal_min' => 0, 'normal_max' => 360],
+                    ['key' => 'angle_v', 'label' => 'Sudut Vertikal', 'unit' => '°', 'decimals' => 4, 'normal_min' => 60, 'normal_max' => 120],
+                    ['key' => 'coord_e', 'label' => 'Koordinat Easting', 'unit' => 'm', 'decimals' => 3, 'normal_min' => 700000, 'normal_max' => 720000],
+                    ['key' => 'coord_n', 'label' => 'Koordinat Northing', 'unit' => 'm', 'decimals' => 3, 'normal_min' => 9760000, 'normal_max' => 9790000],
+                    ['key' => 'coord_h', 'label' => 'Koordinat Elevasi', 'unit' => 'm', 'decimals' => 3, 'normal_min' => 80, 'normal_max' => 130],
                 ],
                 'hotspots' => [
                     ['type' => 'metric', 'label' => 'Total Station', 'metric_key' => 'displacement_h', 'yaw' => -4, 'pitch' => -8],
+                    ['type' => 'plot', 'label' => 'Petak Hulu 1', 'description' => 'Petak pantau hulu, berm atas. Lima patok geser berprisma, masing-masing di tengah petaknya; jarak bidik 128 m, elevasi +98,20 m.', 'yaw' => -10.5, 'pitch' => -9.0, 'meta' => ['side' => 'hulu', 'code' => 'PG-HU1', 'stakes' => 5, 'stake_gap' => 1.8, 'cell_yaw' => 2.2, 'cell_pitch' => 1.4, 'line' => -84, 'foreshorten' => 0.78, 'aspect' => 6]],
+                    ['type' => 'plot', 'label' => 'Petak Hulu 2', 'description' => 'Petak pantau hulu, berm tengah. Lima patok geser berprisma, masing-masing di tengah petaknya; jarak bidik 164 m, elevasi +94,60 m.', 'yaw' => -15.0, 'pitch' => -12.0, 'meta' => ['side' => 'hulu', 'code' => 'PG-HU2', 'stakes' => 5, 'stake_gap' => 1.8, 'cell_yaw' => 2.2, 'cell_pitch' => 1.4, 'line' => -86, 'foreshorten' => 0.78, 'aspect' => 8]],
+                    ['type' => 'plot', 'label' => 'Petak Hulu 3', 'description' => 'Petak pantau hulu, dekat garis muka air. Lima patok geser berprisma, masing-masing di tengah petaknya; jarak bidik 212 m, elevasi +90,80 m.', 'yaw' => -19.5, 'pitch' => -15.5, 'meta' => ['side' => 'hulu', 'code' => 'PG-HU3', 'stakes' => 5, 'stake_gap' => 1.8, 'cell_yaw' => 2.2, 'cell_pitch' => 1.4, 'line' => -88, 'foreshorten' => 0.78, 'aspect' => 10]],
+                    ['type' => 'plot', 'label' => 'Petak Hilir 1', 'description' => 'Petak pantau hilir, berm atas. Lima patok geser berprisma, masing-masing di tengah petaknya; jarak bidik 134 m, elevasi +97,50 m.', 'yaw' => 9.0, 'pitch' => -8.5, 'meta' => ['side' => 'hilir', 'code' => 'PG-HI1', 'stakes' => 5, 'stake_gap' => 1.8, 'cell_yaw' => 2.2, 'cell_pitch' => 1.4, 'line' => -96, 'foreshorten' => 0.78, 'aspect' => 10]],
+                    ['type' => 'plot', 'label' => 'Petak Hilir 2', 'description' => 'Petak pantau hilir, berm tengah. Lima patok geser berprisma, masing-masing di tengah petaknya; jarak bidik 178 m, elevasi +93,10 m.', 'yaw' => 13.5, 'pitch' => -11.5, 'meta' => ['side' => 'hilir', 'code' => 'PG-HI2', 'stakes' => 5, 'stake_gap' => 1.8, 'cell_yaw' => 2.2, 'cell_pitch' => 1.4, 'line' => -94, 'foreshorten' => 0.78, 'aspect' => 12]],
+                    ['type' => 'plot', 'label' => 'Petak Hilir 3', 'description' => 'Petak pantau hilir, kaki lereng. Lima patok geser berprisma, masing-masing di tengah petaknya; jarak bidik 226 m, elevasi +88,40 m.', 'yaw' => 18.0, 'pitch' => -15.0, 'meta' => ['side' => 'hilir', 'code' => 'PG-HI3', 'stakes' => 5, 'stake_gap' => 1.8, 'cell_yaw' => 2.2, 'cell_pitch' => 1.4, 'line' => -92, 'foreshorten' => 0.78, 'aspect' => 14]],
                 ],
             ],
             [
@@ -321,6 +588,7 @@ class StationSeeder extends Seeder
                 'map_x' => 59.0,
                 'map_y' => 48.0,
                 'panorama' => 'avwr-01',
+                'panorama_bearing' => 11,
                 'vendor' => 'Geokon',
                 'model' => '4500S + BE-AVWR Logger',
                 'telemetry_channel' => 'AVWR-01',
@@ -330,8 +598,10 @@ class StationSeeder extends Seeder
                 'metrics' => [
                     ['key' => 'pore_pressure', 'label' => 'Tekanan Air Pori', 'unit' => 'kPa', 'decimals' => 1, 'is_primary' => true, 'chart_type' => 'area', 'normal_min' => 150, 'normal_max' => 280, 'warning_threshold' => 262, 'alert_threshold' => 330, 'critical_threshold' => 380],
                     ['key' => 'piezo_level', 'label' => 'Tinggi Piezometrik', 'unit' => 'mdpl', 'decimals' => 2, 'normal_min' => 84, 'normal_max' => 91],
-                    ['key' => 'water_column', 'label' => 'Kolom Air', 'unit' => 'm', 'decimals' => 2, 'normal_min' => 8, 'normal_max' => 16],
+                    ['key' => 'water_column', 'label' => 'Kolom Air', 'unit' => 'mH2O', 'decimals' => 2, 'normal_min' => 8, 'normal_max' => 16],
                     ['key' => 'battery_voltage', 'label' => 'Tegangan Baterai', 'unit' => 'V', 'decimals' => 2, 'normal_min' => 11.8, 'normal_max' => 14.5],
+                    ['key' => 'frequency_raw', 'label' => 'Frekuensi Mentah', 'unit' => 'B-unit', 'decimals' => 1, 'normal_min' => 7800, 'normal_max' => 9200],
+                    ['key' => 'sensor_temperature', 'label' => 'Suhu Sensor', 'unit' => '°C', 'decimals' => 2, 'normal_min' => 22, 'normal_max' => 32],
                 ],
                 'hotspots' => [
                     ['type' => 'metric', 'label' => 'Terminal Box Piezometer', 'metric_key' => 'pore_pressure', 'description' => '8 kanal vibrating wire pada dua elevasi.', 'yaw' => 0, 'pitch' => -18],
@@ -350,6 +620,7 @@ class StationSeeder extends Seeder
                 'map_x' => 33.5,
                 'map_y' => 53.0,
                 'panorama' => 'osp-ow',
+                'panorama_bearing' => 350,
                 'vendor' => 'Beacon Engineering',
                 'model' => 'BE-OSP Logger',
                 'telemetry_channel' => 'OSP-OW-01',
@@ -376,6 +647,7 @@ class StationSeeder extends Seeder
                 'map_x' => 64.2,
                 'map_y' => 65.9,
                 'panorama' => 'v-notch',
+                'panorama_bearing' => 335,
                 'vendor' => 'Beacon Engineering',
                 'model' => 'BE-VN-90',
                 'telemetry_channel' => 'VNOTCH-01',
@@ -404,6 +676,7 @@ class StationSeeder extends Seeder
                 'map_x' => 82.6,
                 'map_y' => 57.4,
                 'panorama' => 'gnss-tilt',
+                'panorama_bearing' => 348,
                 'vendor' => 'Beacon Engineering',
                 'model' => 'BE-GNSS-RTK + BE-TILT-2A',
                 'telemetry_channel' => 'GNSS-TILT-01',
@@ -423,8 +696,8 @@ class StationSeeder extends Seeder
             ],
             [
                 'code' => 'cctv-01',
-                'name' => 'CCTV-01 — Puncak Bendungan',
-                'short_name' => 'CCTV Puncak',
+                'name' => 'CCTV Bendungan',
+                'short_name' => 'CCTV Bendungan',
                 'type' => 'cctv',
                 'group' => 'pengawasan',
                 'zone' => 'Puncak',
@@ -434,6 +707,7 @@ class StationSeeder extends Seeder
                 'map_x' => 51.2,
                 'map_y' => 15.4,
                 'panorama' => 'cctv-01',
+                'panorama_bearing' => 292,
                 'vendor' => 'Hikvision',
                 'model' => 'DS-2DE7A425IW-AEB',
                 'telemetry_channel' => 'CCTV-01',
@@ -449,33 +723,6 @@ class StationSeeder extends Seeder
                 ],
             ],
             [
-                'code' => 'cctv-02',
-                'name' => 'CCTV-02 — Spillway dan Stilling Basin',
-                'short_name' => 'CCTV Spillway',
-                'type' => 'cctv',
-                'group' => 'pengawasan',
-                'zone' => 'Spillway',
-                'latitude' => -1.9566,
-                'longitude' => 119.3452,
-                'elevation' => 78.500,
-                'map_x' => 78.0,
-                'map_y' => 46.0,
-                'panorama' => 'cctv-02',
-                'vendor' => 'Hikvision',
-                'model' => 'DS-2DE7A425IW-AEB',
-                'telemetry_channel' => 'CCTV-02',
-                'installed_on' => '2025-04-22',
-                'description' => 'Kamera pengawas saluran peluncur dan kolam olak untuk verifikasi visual saat pelimpasan.',
-                'metrics' => [
-                    ['key' => 'stream_bitrate', 'label' => 'Bitrate Stream', 'unit' => 'Mbps', 'decimals' => 2, 'is_primary' => true, 'normal_min' => 1, 'normal_max' => 8],
-                    ['key' => 'frame_rate', 'label' => 'Frame Rate', 'unit' => 'fps', 'decimals' => 0, 'normal_min' => 15, 'normal_max' => 30],
-                    ['key' => 'link_uptime', 'label' => 'Uptime Perangkat', 'unit' => '%', 'decimals' => 1, 'normal_min' => 95, 'normal_max' => 100],
-                ],
-                'hotspots' => [
-                    ['type' => 'info', 'label' => 'Kolam Olak', 'description' => 'Stilling basin tipe USBR II.', 'yaw' => 18, 'pitch' => -24],
-                ],
-            ],
-            [
                 'code' => 'ews-01',
                 'name' => 'EWS — Sirene Peringatan Hilir',
                 'short_name' => 'EWS Hilir',
@@ -488,6 +735,7 @@ class StationSeeder extends Seeder
                 'map_x' => 88.0,
                 'map_y' => 74.0,
                 'panorama' => 'ews-01',
+                'panorama_bearing' => 330,
                 'vendor' => 'Beacon Engineering',
                 'model' => 'BE-EWS-120',
                 'telemetry_channel' => 'EWS-01',
@@ -497,6 +745,10 @@ class StationSeeder extends Seeder
                     ['key' => 'siren_battery', 'label' => 'Baterai Sirene', 'unit' => '%', 'decimals' => 0, 'is_primary' => true, 'normal_min' => 60, 'normal_max' => 100],
                     ['key' => 'siren_range', 'label' => 'Jangkauan Suara', 'unit' => 'km', 'decimals' => 2, 'normal_min' => 1.2, 'normal_max' => 3.0],
                     ['key' => 'signal_strength', 'label' => 'Kuat Sinyal', 'unit' => 'dBm', 'decimals' => 0, 'normal_min' => -95, 'normal_max' => -45],
+                    ['key' => 'source_value', 'label' => 'Nilai Sumber (AWLR Hilir)', 'unit' => 'mdpl', 'decimals' => 3, 'chart_type' => 'area', 'normal_min' => 26.0, 'normal_max' => 29.5, 'warning_threshold' => 30.0, 'alert_threshold' => 31.0],
+                    ['key' => 'warning_level', 'label' => 'Batas Peringatan', 'unit' => 'mdpl', 'decimals' => 2, 'normal_min' => 29, 'normal_max' => 31],
+                    ['key' => 'alarm_level', 'label' => 'Level Alarm', 'unit' => 'level', 'decimals' => 0, 'chart_type' => 'bar', 'normal_min' => 0, 'normal_max' => 2, 'warning_threshold' => 3, 'alert_threshold' => 5, 'critical_threshold' => 7],
+                    ['key' => 'siren_status', 'label' => 'Status Sirene', 'unit' => 'status', 'decimals' => 0, 'chart_type' => 'bar', 'states' => ['0' => 'Mati', '1' => 'Siaga', '2' => 'Berbunyi'], 'normal_min' => 0, 'normal_max' => 1, 'warning_threshold' => 2],
                 ],
                 'hotspots' => [
                     ['type' => 'info', 'label' => 'Menara Sirene', 'description' => 'Tinggi 12 m, tiga horn arah pemukiman.', 'yaw' => 0, 'pitch' => 14],
@@ -515,6 +767,7 @@ class StationSeeder extends Seeder
                 'map_x' => 26.0,
                 'map_y' => 20.0,
                 'panorama' => 'radio-ap',
+                'panorama_bearing' => 331,
                 'vendor' => 'Ubiquiti',
                 'model' => 'Rocket 5AC Prism',
                 'telemetry_channel' => 'RADIO-AP-01',

@@ -65,9 +65,14 @@
         </div>
 
         {{-- Only the digital twin has pins to aim at, so the field lives with
-             the stage rather than in the header of every page. --}}
+             the stage rather than in the header of every page — and only while
+             the base panorama is on screen, because inside a station there are
+             no pins to steer to and the search would only be a way out of the
+             picture the reader just opened. --}}
         @if ($stationSearch)
-            @include('partials.station-search')
+            <div x-show="!$store.viewer.open" x-cloak>
+                @include('partials.station-search')
+            </div>
         @endif
     </div>
 
@@ -82,7 +87,9 @@
         </a>
 
         @if ($stationSearch)
-            @include('partials.station-search', ['compact' => true])
+            <div x-show="!$store.viewer.open" x-cloak>
+                @include('partials.station-search', ['compact' => true])
+            </div>
         @endif
 
         <button type="button" class="glass glass--chip glass-button size-11" title="Bantuan" aria-label="Bantuan"

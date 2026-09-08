@@ -4,7 +4,7 @@
     $items = collect([
         ['route' => 'dashboard', 'label' => 'Dashboard', 'icon' => 'dashboard'],
         ['route' => 'twin', 'label' => 'Digital Twin', 'icon' => 'cube'],
-        ['route' => 'sensors', 'label' => 'Instrumentasi', 'icon' => 'sensor'],
+        ['route' => 'sensors', 'label' => 'Data Pos', 'icon' => 'sensor'],
         ['route' => 'analytics', 'label' => 'Analisa & Grafik', 'icon' => 'chart-line'],
         ['route' => 'maintenance', 'label' => 'Perawatan', 'icon' => 'wrench', 'can' => 'maintenance.view'],
         ['route' => 'alerts', 'label' => 'Peringatan', 'icon' => 'bell'],

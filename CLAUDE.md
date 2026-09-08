@@ -12,6 +12,17 @@ records conventions that are easy to break.
   (see `config/dam.php`). Buckets shown in the health donut are `aman`,
   `waspada`, `siaga`, `bahaya`.
 
+## Environment
+
+- The app runs on MySQL (`DB_CONNECTION=mysql`, schema `budong_budong_dt`);
+  sessions, cache and the queue are database-backed, so a schema swap logs
+  everyone out. Tests are unaffected — `phpunit.xml` pins them to an in-memory
+  SQLite.
+- On a `sqlite` connection Laravel reads `DB_DATABASE` as a *file name*, not a
+  schema: leaving `DB_DATABASE=budong_budong_dt` there quietly creates a
+  `budong_budong_dt` file in the project root and the app runs off that. Both
+  that file and `database/database.sqlite` are gitignored.
+
 ## Data flow
 
 - Every value the UI renders comes from `App\Services\MonitoringService`, which
@@ -27,6 +38,16 @@ records conventions that are easy to break.
   mutate in place.
 - Thresholds live in `sensor_metrics`; `SensorMetric::statusFor()` is the single
   place that maps a value to a status.
+- A reading is always a number, so state parameters (status sensor, kondisi
+  pintu, status sirene) store the number and the metric carries the words in
+  its `states` map — `SensorMetric::stateLabel()` looks one up. That keeps one
+  storage shape: the state still charts as a step and still has thresholds.
+  Do not add a text column to `sensor_readings` for them.
+- Every parameter the product sheet lists has a metric, including the raw ones
+  (`raw_reading`, `frequency_raw`) and the survey figures behind ADR
+  displacement (`distance`, `angle_h`, `angle_v`, `coord_e/n/h`). Adding a
+  metric to `StationSeeder` also means adding its case to `ReadingSimulator`,
+  or the parameter exists with an empty chart.
 
 ## Frontend
 
@@ -61,6 +82,13 @@ records conventions that are easy to break.
 - `loadHd()` passes the current zoom through: `setPanorama` without one falls
   back to the viewer's default and yanks the camera out of whatever framing the
   reader had.
+- Nothing of a station goes up until its picture has landed:
+  `syncPins()` draws hotspots only while `stationView && !pointing && !flying`.
+  `viewer.open` is true from the moment the pin is picked, so without the
+  `flying` guard the arrival drew the station's petak and prisms over the base
+  dam — dashed plots lying across the reservoir for the length of the
+  cross-fade. The pins fade out under `sphere--departing`; the hotspots have
+  no such cover, because they are not supposed to exist yet.
 - The cross-fade into a station must not rotate (`rotation: false`): the camera
   has just been turned to the pin, so swinging it to the new panorama's default
   yaw mid-fade is the jump that reads as a blink. The pins fade out with
@@ -81,8 +109,20 @@ records conventions that are easy to break.
 - The base panorama opens on a compass bearing, not a raw yaw
   (`dam.stage.default_bearing`, 36 = north-east across the dam):
   `openingYaw()` subtracts `north_offset`, so correcting where north sits does
-  not swing the opening framing. Stations still open on their own
-  `panorama_yaw`, and the reset control uses the same helper.
+  not swing the opening framing. Stations open the same way, on their own
+  `panorama_bearing` — the direction the reader is meant to be facing at that
+  instrument, which is a survey figure and not a framing preference; a station
+  without one falls back to its raw `panorama_yaw`. The reset control uses the
+  same helper.
+- A panorama is facing its opening bearing the moment it appears, and nothing
+  turns on screen to get there: `setPanorama` is given a `position` *with*
+  `transition.rotation: false`. That pair is not a contradiction — the viewer
+  pre-rotates the incoming sphere so the requested framing already sits where
+  the camera points, then swaps camera and sphere together once the fade ends.
+  `rotation: true` would animate the camera across both pictures at once,
+  which is the blink; turning after the fade instead is a move the reader can
+  see and did not ask for. Only `loadHd()` may omit the position — it is the
+  same picture sharpening, so it must keep whatever framing the reader has.
 - `position-updated` and `zoom-updated` only fire on a *change*, so the
   mirrored camera state is seeded from `viewer.getPosition()` /
   `getZoomLevel()` in the `ready` handler. Without it the compass read north
@@ -97,6 +137,26 @@ records conventions that are easy to break.
   re-centred on every arrival. It sets off to the right because the right-hand
   keypoint is first and the plugin has `startFromClosest: false` — with the
   default it would pick whichever side it happened to be nearest.
+- A station pin names one parameter at a time and walks through the rest
+  (`readings` in the marker payload, `CAPTION_EVERY`): a pin that shows one
+  figure and hides nine behind a click is a pin the reader has to leave the
+  stage to get past. The cycle rewrites only the two lines of text, found
+  through `[data-station]` in our own markup — re-rendering the marker would
+  restart the dot's breathing animation, and fifteen of those restarting in
+  step is a twitch across the whole stage. It stops inside a station,
+  mid-flight, with the `Label` pill off, and on a hidden tab. The figure wears
+  its own parameter's status; the dot keeps the station's, which is the worst
+  of them and the reason to look at all.
+- Pin captions are **not** decluttered, and that is a decision rather than an
+  omission: every caption stays where its pin is, and two of them overlapping
+  is accepted. Hiding the loser was tried first (pins seemed to vanish the
+  moment the `Label` pill went on), then shrinking it to the name alone, then
+  moving it aside — and each of those cost more than the overlap did. Moving
+  in particular has to fight three separate sources of flicker: the offset has
+  to be subtracted from the measured box rather than cleared off the element,
+  last frame's spot has to be tried first or two captions swap sides for ever,
+  and `setMarkers` hands back new elements every poll with the offsets gone.
+  Before re-adding any of it, be sure the overlap is actually worse.
 - Nothing that moves every frame may carry `backdrop-filter`. The pin captions
   are deliberately flat plates rather than `.glass`: fifteen blurred chips
   travelling with the sphere is what makes the drift stutter on a big screen.
@@ -108,6 +168,166 @@ records conventions that are easy to break.
   `MonitoringService::spherePosition()` derives a bearing from the plan-view map
   percentages (tunable in `dam.stage.sphere`). A drop posts to
   `/api/stations/{code}/sphere`.
+- Placement is one control for both views: the base panorama moves station
+  pins, a station panorama moves that station's own hotspots (posting to
+  `/api/hotspots/{id}/position`). `bindDragging()` picks a marker up by
+  `[data-station]` or `[data-hotspot]` depending on which view is on screen,
+  and the drop writes the new angles into the payload as well as the record —
+  the next `syncPins()` rebuilds every marker from `station.hotspots`, so a
+  position left only on the server snaps back. Both wrap the yaw into
+  -180..180, the way the columns are read back.
+- A line of monitoring plots (`type = 'plot'`) is one record for five petak,
+  one per stake. Its `meta` carries `side`, `code`, `stakes`, the spacing
+  between stakes (`stake_gap`), the size of one petak (`cell_yaw`,
+  `cell_pitch`), the direction the line runs (`line`) and how much each step
+  crowds (`foreshorten`); every petak, every stake and the caption are
+  *derived* from the record's centre, and the stake names come from the code
+  (`PanoramaHotspot::stakeCodes()`). Sixty records to drag one at a time is
+  not a placement tool.
+- `line` is the direction of the stake sequence in the picture (0 = right,
+  90 = down), because a survey line runs along the dam, not across the frame:
+  three lines step away from the crest and five stakes march along the axis in
+  each. `foreshorten` shortens every step, which is what makes a receding line
+  read as lying on the slope instead of painted flat over it. `StationSeeder`
+  still has to keep a nominal petak inside a nominal step — `|cos(line)| *
+  cell_yaw + |sin(line)| * cell_pitch` below `stake_gap`, which is what the
+  test asserts — but what is *drawn* is derived from the placement, not from
+  those figures.
+- A petak is turned onto the line it belongs to (`stakeAim()`), because a plot
+  is a patch of the dam and the dam crosses the picture at an angle: an
+  upright rectangle over an oblique face reads as pasted onto the photograph
+  rather than lying on it. The angle comes from the prisms either side of the
+  stake, not from `meta.line` — once a line has been placed by hand it no
+  longer runs the way the record laid it out, and the petak have to follow the
+  placement. `cell_pitch` is then the petak's extent *along* the line and
+  `cell_yaw` its extent up and down the slope, which is what those two come to
+  once the line runs up and down the frame — so a line nobody has turned looks
+  exactly as it did.
+- `meta.places` is the one thing about a line that is not derived: an offset
+  per stake, written by dragging that stake, so a line can be placed as a
+  piece and then corrected prism by prism. Offsets, not angles — moving the
+  line afterwards has to carry every correction with it. A caption drag posts
+  to `/api/hotspots/{id}/position`, a stake drag to
+  `/api/hotspots/{id}/stakes/{n}`, and `nudgedPlot()` measures the offset
+  against where that stake *would* have stood with no nudge at all.
+- Each petak is a projected `polygon` marker: points in spherical
+  coordinates, so it lies on the slope. Its stake is the opposite — an HTML
+  marker of a fixed pixel size, standing in the middle of it. Drawn to scale a
+  patok is a metre of concrete at 130 m, a third of a degree, a speck nobody
+  can find at the widest zoom; it is a sign, so it keeps a legible size while
+  only the ground it stands on scales. The petak is `pointer-events: none`, so
+  clicks belong to the stake in it.
+- The stake marker is a 16px symbol in a 26px box, and the extra ring is hit
+  area: a 16px target on a photograph is a target people miss. It carries
+  `role="button"` and its code plus its reading as `aria-label`, so the marker
+  has a name for a screen reader as well as a tooltip.
+- What is *printed* under a stake is its linear displacement in mm, coloured
+  by the status that figure earns — the code stays a tooltip. That is also why
+  a stake wears a status colour when its petak does not: the petak is ground,
+  the figure is a reading.
+- Those figures appear with the zoom that makes room for them
+  (`sphere--near`, and always under the pointer). A line running away from the
+  camera crowds its far stakes to ten pixels apart at the widest zoom, and no
+  40px plate fits between them; the readout that never competes for room is
+  the one in the panel.
+- `MonitoringService::stakes()` is where a per-prism figure comes from. The
+  instrument measures the dam body (`displacement_h`, `displacement_v`), not
+  one stake; a plot's prisms are where that movement is *distributed*, so each
+  stake takes a fixed share derived from `crc32` of its own code. The share
+  must be a function of the code and nothing else — seed it from time or
+  `rand()` and the deformation field shimmers on every poll.
+- A prism reports how far it has moved **since it was set**, not how far it
+  moved this cycle, so each carries years of accumulated creep on top of its
+  share of the current reading — and they do not carry the same amount. The
+  creep is cubed off the code hash, which gives the shape a real face has: many
+  prisms well inside their band, a handful past the warning, one or two past
+  the alert. Without it every prism read two millimetres and the whole field
+  was green, which is a picture that never says anything and thirty prisms
+  nobody needs. The components are rescaled to the grown figure so the panel's
+  horizontal and vertical still add up to the linear it prints, and a test
+  asserts the field spans more than one band.
+- `aspect` in a plot's `meta` is an angle **in the picture** (0 = right,
+  90 = down), not a surveyed azimuth, and it is what the arrow is rotated to.
+  The panel labels it "Arah gambar" for that reason. Deriving a real bearing
+  would need a camera model the renders do not carry — do not print one. In
+  the ADR-02 panorama the reservoir is on the left, so the body is pushed to
+  the right and every plot's aspect is a few degrees below the horizontal: a
+  little downstream travel plus a little settlement. Per-stake deviation is
+  ±10 degrees, wide enough that prisms do not creep in lockstep and narrow
+  enough that the field still reads as one direction.
+- The arrows are behind a toggle (`showVectors` / `sphere--vectors`) and live
+  inside the stake marker rather than as markers of their own: thirty extra
+  markers for a mode nobody has asked for is thirty transforms a frame. The
+  arrow's length is the size of the movement, so the scale it was drawn at is
+  printed on screen beside it — a length with no scale is a picture that
+  cannot be read. That scale is `VECTOR_SCALE` in `panorama.js` and the
+  caption prints it through `twinSphere.vectorScale`, so the two cannot drift
+  apart. It is deliberately small: a dam creeps in millimetres, and an arrow
+  that turns two of them into forty pixels of pointer tells the reader
+  something the instrument did not.
+- The millimetre figures have a toggle of their own (`showFigures`, remembered
+  under `twin.figures`), which forces `sphere--near`. Two separate controls,
+  because they answer separate questions — which way, and how far — and the
+  far end of a line overlaps when the figures are held open at a wide zoom.
+  That is the reader's call to make, so it is a button, not a rule.
+- Placement writes a record, so it may not be triggered by a click:
+  `DRAG_SLOP` (4px of pointer travel) separates a drag from a tap. Without it
+  a stray click in placement mode silently rewrites a marker's angles — which
+  is a survey figure changing because somebody pointed at it.
+- Seeded angles for a plot or an instrument are an estimate off the picture,
+  because the renders are not surveyed. Correcting them from the stage is the
+  only honest way, which is what the placement control is for.
+- Placement lives in the database, so **pushing code does not carry it**:
+  a new environment seeds the catalogue's estimates and an afternoon of placing
+  prisms on the real bays is gone. `php artisan placements:export` writes the
+  current pins, hotspot angles and per-prism nudges to
+  `database/seeders/data/placements.php`; commit that and `StationSeeder` reads
+  it **when it creates a row**. Only on create, the same rule a dragged marker
+  has always had — an install that already has placements keeps them. Re-run
+  the command after a placing session, and a test asserts the round trip
+  against the file itself.
+- Those two halves are what a deploy actually needs, at once: the target's own
+  pins stay where somebody dragged them, and a marker that is *new* there comes
+  up on the angles exported from the machine it was placed on. Never run
+  `placements:export` on the target before deploying to it — that overwrites
+  the file with what the target already has, which is precisely the placement
+  the push was carrying. Export where the placing was done, commit, push.
+  `test_a_deploy_keeps_placed_pins_and_brings_new_plots_with_it` is that run.
+- A rename is the exception, because placement is keyed by station `code` and
+  hotspot `label`: renaming either retires the old row and creates a new one,
+  so the new one takes the *file's* angles, not the target's. Anything placed
+  on the target under the old name has to be placed again.
+- The catalogue is authoritative for *stations* too: a station whose code
+  `StationSeeder` no longer lists is deleted, and its readings, metrics and
+  hotspots cascade with it while alerts and maintenance jobs keep their history
+  on a null station. Nothing else ever deletes one, so without that a renamed
+  or retired point stayed on the stage for ever. The same now goes for a
+  metric the catalogue drops.
+- Every station that has any instrument at all also carries the three channels
+  the logger reports about *itself* — `logger_battery`, `logger_temperature`,
+  `logger_humidity` (`StationSeeder::LOGGER_METRICS`, appended after the
+  catalogue). Named `logger_*` because a weather station already reports the
+  air's temperature and humidity and those are a different thing. A flat
+  battery or a damp enclosure is why a station stops reporting, and it shows up
+  here days before it shows up anywhere else. The overview panorama gets none:
+  it has no box on a pole, and three parameters would put it in the analytics
+  station list with nothing to draw.
+- `StationSeeder` upserts hotspots on `(station, label)`, writes `yaw`/`pitch`
+  only when the row is created, and carries an existing `meta.places` over the
+  catalogue's `meta`, so a re-seed refreshes the copy without throwing away
+  where somebody placed a line or nudged one of its prisms. It therefore has to prune by
+  what it touched (`keptHotspots`) instead of deleting the station's hotspots
+  first — and the link pass has to go through the same upsert, or every run
+  would add another copy of every jump.
+- `x-show` hides an element by writing `display` into its `style` attribute, so
+  an element may not carry both `x-show` and a `:style` binding: the binding
+  rewrites the whole attribute and the element comes back. Bind a class
+  instead (the placement hint's `bottom-…` is why). A *static* `style`
+  attribute is fine — Alpine only appends to that.
+- The station overlay has no strip of neighbouring panoramas. Six type icons
+  said nothing about where those panoramas are; the way across is a `link`
+  hotspot standing in the direction the reader would walk, or the pins on the
+  base view.
 - `<template x-for>` does not work inside `<svg>`. Build SVG fragments as a
   string in the store and inject with `x-html` (see `site.healthDonut`).
 - Heavy libraries (photo-sphere-viewer with its three.js, echarts) must stay
@@ -117,8 +337,20 @@ records conventions that are easy to break.
   when `scope = 'semua'`), and the parameters the reader ticks drawn into a
   single chart. A card in the grid is a shortcut into `analisa` — never a
   second menu entry, which would duplicate the station and range controls and
-  make the reader choose before they can look. Station, range and mode persist
-  in `localStorage` (an older stored `kisi`/`detail` still resolves).
+  make the reader choose before they can look. Station, range and mode live in
+  the URL and nowhere else — `?stasiun`, `?rentang`, `?tampilan`,
+  `?parameter` (an older `detail`/`kisi` still resolves), read on boot and
+  written back by every control. They used to persist in `localStorage`, which
+  cost the screen both ends of its job: the Grafik button on Data Sensor named
+  a station and landed the reader on whatever they last had open, and the menu
+  entry could never be a neutral way in. A plain visit opens on `semua` — every
+  station's headline parameter, the one view that answers a question nobody
+  has asked yet.
+- The station list is only stations that *have* parameters. The overview
+  panorama has none, and offering it left the reader on an empty screen with
+  no way to tell the station from a broken page — and because the choice is
+  remembered, every later visit opened blank too. The grid still says so when
+  a scope turns out to have nothing to draw.
 - One range governs the whole grid. Per-card ranges would put charts side by
   side that cannot be compared, which is the only reason to place them there.
 - Grid cards draw when they scroll into view (one `IntersectionObserver`,
@@ -126,12 +358,28 @@ records conventions that are easy to break.
   nobody has reached. The observer only reports a *change*, so returning from
   `analisa` — where every card was `display: none` — calls `drawInView()`,
   which measures rather than waiting for a scroll that may never come.
+- The chart keeps at least one series, and the **last chip says so** rather than
+  refusing in silence: tapping the only picked parameter to swap it did nothing
+  at all, which reads as a chart that never changes. It carries no remove
+  button and its title explains.
+- `loadAnalysis()` has a `catch`. It did not, so a failed series request left
+  the previous chart on screen — correct-looking, stale, and unannounced. A
+  picture that quietly refuses to update is worse than no picture.
 - `analisa` combines units through a second y-axis, and stops at two. Each axis
   carries its unit as its name; a third scale on one chart is a picture nobody
   can read, so those chips are rendered disabled with the reason in the title.
   Thresholds are drawn only when a single parameter is picked — every set at
   once turns the chart into a ladder. Statistics describe the first parameter
   picked and say so.
+- Arriving and changing are two different movements. A chart is rebuilt with
+  `notMerge` whenever the picked parameters change, so without an update pair
+  (`animationDurationUpdate`, `animationEasingUpdate`) every swap replayed the
+  full entrance and the picture snapped instead of moving. The line also draws
+  itself left to right (`animationDelay` per point, capped) and a second series
+  follows the first by a beat, which is what makes two of them read as two. The
+  canvas dims while its numbers are in flight, so a swap is one movement rather
+  than a stale picture replaced by a new one — and all of it is off under
+  `prefers-reduced-motion`, like everything else here that moves.
 - `seriesChart`/`sparkline` attach a `ResizeObserver` to their container.
   ECharts measures at `init`, and a container that was `display: none` measures
   zero — the library then keeps a 100px canvas for ever, which is how the
@@ -206,11 +454,119 @@ records conventions that are easy to break.
   in the layout): the other pages are a document in that column, so the handle is
   not rendered and `panelCollapsed` starts false there — otherwise a fold made on
   the stage would hide the panel on a page with no way to bring it back.
+- `.glass` carries one drop shadow, wide and soft, and it is named
+  (`--glass-lift`) so it can be taken away in one place. A tight `0 2px 10px`
+  under it reads as a thin black line drawn down the edge of a full-height
+  column rather than as a shadow — a lift belongs to a card, not to a wall.
+- Inside the rail and the summary panel the lift is off entirely
+  (`.rail-column .glass`, `[data-chrome="panel"] .glass`). Plates stacked in a
+  column cast on each other: the card above drops its shadow into the gap and
+  onto the head of the card below, which reads as dirt in the seam rather than
+  as depth, because a shadow falling on the thing beside it says nothing about
+  height. The hairline is the whole edge there.
+- The compass sits flush with the top of the stage, on the line the rail and
+  the summary panel start on (`--header-h`). The three are the same row of
+  chrome and have to read as one; eight pixels of inset was enough to make the
+  stage look misaligned with the menu beside it.
+- The panel's fold control is the first button in the stage's own right-edge
+  stack, not a chip parked beside it. Floating at `top: 50%` it landed on
+  whichever control happened to be at the top of that column — the column grows
+  and shrinks with the reader's abilities and the station on screen, so there
+  is no offset that clears it. A control that has to dodge another one is in
+  the wrong place. It reaches `togglePanel()` through the frame's own
+  `x-data`, which the stage sits inside.
 - The summary panel folds away on desktop through `panelCollapsed` (persisted in
   `localStorage`, class `app-frame--panel-collapsed`). The panel keeps its own
   `--panel-w-open`; only `--panel-w` — what the stage reserves — goes to zero, so
   the stage widens without squashing the panel mid-animation. Collapsed also
   means `inert`, so focus cannot land in it.
+- Two surfaces are arranged, together and by one control: the page's own grid
+  (`board`) and the summary column down the right (`panel`). They are one
+  screen to the reader, so ordering half of it would be half a feature — but
+  they are stored under separate keys, because the panel follows the reader
+  onto every other page while the board does not. `DashboardLayout::SURFACES`
+  names both.
+- The arranger is an Alpine **store**, not a component, for exactly that
+  reason: the two surfaces live in different Blade sections and one control has
+  to reach both.
+- `boot()` seeds state and touches nothing on the page. The server already
+  rendered the saved arrangement, so there is nothing to move — and moving it
+  anyway re-parented every card while Alpine was still initialising, which
+  tears down and rebuilds the components inside them. The trend chart came back
+  with its `$refs` pointing at a dead subtree, and `echarts.init(undefined)`
+  threw *Cannot read properties of undefined (reading 'getAttribute')*. Only
+  `cancel()` moves nodes, and then only ones that are not already in place: an
+  unconditional `appendChild` is a re-parent, and a re-parent costs the
+  components inside a card their lives.
+- `seriesChart()` and `sparkline()` refuse an element that is not there, by
+  name. `echarts.init(undefined)` throws a message that identifies nothing,
+  which is a long way from the caller that lost its element.
+- The dashboard is arranged once, for everybody (`App\Support\DashboardLayout`,
+  stored in `settings` under `dashboard_layout`, written behind
+  `dashboard.arrange`). Not per account: it is the control room's own screen
+  and often the thing on the wall, so two operators looking at it should be
+  looking at the same board.
+- Each card is a partial under `partials/dashboard` named by its key; adding
+  one means adding it to `DashboardLayout::CARDS` and dropping the file in
+  beside the others. The grid is six columns so the original board is
+  reproducible — a third, a half, two thirds, or the whole row — and below
+  `lg` the spans are ignored and everything stacks, because a layout arranged
+  on a control-room screen does not survive a phone.
+- `current()` is always complete and always valid: a card added to the
+  catalogue after somebody saved appears at the end rather than vanishing, and
+  a saved key that no longer exists is dropped. `save()` trusts nothing from
+  the browser — unknown keys, duplicates and impossible widths go, and a fixed
+  card cannot be narrowed or hidden however the request is shaped. There is no
+  `reset()`: saving an empty list is one.
+- A card can also be pointed at *what it shows*: `DashboardLayout::choices()`
+  builds the offer from the instrumentation catalogue at request time, so a
+  card can only ever name a parameter, station or type the site actually has.
+  Headline tiles pick their parameters, the trend card its station, the station
+  list a type, the two list cards a row count. An option outside the offer is
+  **dropped, not corrected** — an empty option means "as designed", and a board
+  falling back to its default is easier to explain than one quietly showing the
+  wrong station.
+- Choosing that content is a **dialog**, not controls wedged into the card.
+  The headline row offers a hundred and forty-six parameters, and a
+  `<select multiple>` that deep is a list nobody reads and a Ctrl-click
+  nobody discovers. The picker searches over the whole label, groups by
+  station, shows what is picked as removable chips in the order they were
+  picked — the tiles come out in that order — and disables the rest once the
+  maximum is reached rather than silently ignoring the next click.
+- Saving reloads the page. The order and the widths would have survived without
+  it, but what a card *shows* is server rendered — a different station on the
+  chart or a different set of tiles is a different page, not a rearranged one,
+  and a board that half-updated would be worse than one that took a second.
+- The arranger reads the arrangement back out of the **DOM** rather than
+  keeping a second copy in component state — order, width and visibility are
+  all in the document, and a duplicate is how the two drift apart. The one
+  exception is the per-card options, which are nowhere in the DOM and so are
+  the one thing the component has to hold. Every move
+  dragging can make is also on a pair of arrow buttons: a control that answers
+  only to a pointer is one a keyboard cannot reach, and this one writes for the
+  whole control room.
+- No figure appears twice on one screen. `recentReadings()` drops anything
+  already on the headline tiles — the two lists were configured independently
+  and overlapped on all four, so a quarter of the board was the same numbers
+  printed large and again in a list beside them. The board's alert card reads
+  `alert_history` (newest, settled or not) while the summary column keeps
+  `alerts` (standing only); before that both drew the same array and one of
+  them said nothing the other had not.
+- The station list is ordered by urgency, not by name, and the stations with
+  nothing to report collapse into one line (`site.urgentMarkers()`). Seventeen
+  stations that are all fine is one fact, not seventeen rows to scroll past —
+  and alphabetical order put ADR-01 on top because of its first letter.
+- The health ring prints a **count**, not a score. The percentage was a rounded
+  fraction of parameters with the rounding drift absorbed into the largest
+  bucket: two digits of precision for something that coarse. "2 dari 146" is
+  the honest shape of it.
+- The trend card prints how far the reading is from its next threshold. The
+  chart already draws those lines, but on a reservoir sitting a metre and a
+  half below its limit they are off the top of the picture — the gap in words
+  is the part the shape cannot say.
+- `DashboardLayout::PRESETS` holds arrangements somebody has already thought
+  about. An arranger is worth as much as the arrangements people think of, and
+  "default, or build your own" leaves most readers on the default for ever.
 - The summary panel takes a `skipPrimary` flag; the dashboard sets it because
   the page already prints those four tiles across the top.
 - A page that has nothing for the panel must not declare the section at all:
@@ -233,6 +589,23 @@ records conventions that are easy to break.
 - The frame is `w-full`, never `w-screen`: `100vw` includes the scrollbar, which
   used to push the summary panel ~15px off the right edge on any page tall
   enough to scroll.
+- Charts opt out of `chrome-scale` (`[data-chart] { zoom: calc(1 / var(--ui-zoom)) }`).
+  ECharts maps the pointer with `offsetX`, and Chromium reports that as the
+  *visual* offset while the canvas is sized from `clientWidth` — so under
+  `zoom: 1.1` the crosshair drifts a tenth of the way it has travelled from
+  the chart's left edge. Measured: the pointer read 330 of a 400-wide box
+  where it should have read 300. Cancelling the scale costs nothing, because
+  Chromium resolves a percentage against the parent in the child's own zoom
+  space — `h-full` comes out the same size on screen, and net zoom 1 makes
+  `clientWidth` and the bounding rect agree.
+- `chrome-scale` is `zoom`, so every length written on that element is
+  multiplied by it. Centre a floating plate by *spanning* the stage
+  (`left: var(--stage-left); right: var(--stage-right)`) and letting flex do
+  it — never by computing the midpoint into `left`, which on a screen scaled
+  to 1.09 landed the station metric strip some ninety pixels right of centre.
+  A percentage offset (`left-1/2`) inside a scaled parent is safe, because the
+  parent is scaled with it; an absolute one is not. Position on an unzoomed
+  parent and scale only the plate.
 - A menu opening over another glass panel needs `.glass--menu` (near-opaque);
   plain `.glass--panel` lets the numbers underneath read straight through it,
   and Chromium drops the backdrop blur inside the zoomed chrome. The header sits
@@ -275,11 +648,59 @@ records conventions that are easy to break.
   belongs to the page that has one — on the other pages the header was offering
   a search whose only outcome was leaving the page. It fires a `focus-station`
   window event the stage listens for; the `/` shortcut finds no field elsewhere
-  and leaves the key alone.
+  and leaves the key alone — it checks `offsetParent`, not just existence,
+  because `x-show` leaves a hidden field in the document.
+- The search is hidden while a station panorama is open (`!$store.viewer.open`).
+  Inside a station there are no pins to steer to, so the only thing the field
+  could do is take the reader out of the picture they just opened.
 - A pin picked from search is `highlighted`: it wears its caption even with the
   `Label` pill off, and keeps it until the reader touches the sphere or opens a
   station. Turning the camera to a dot without naming it leaves the reader to
   guess which one was meant.
+- A hotspot chip is a flat plate, not `.glass`, for the reason the pin captions
+  are: it travels with the sphere. A row's caption is the compact variant and
+  sits above the petak, clear of every stake it would otherwise cover, and it
+  is the drag handle for the whole row. `sphere--quiet` hides those captions too,
+  so the `Label` pill declutters a station view as well (it is set from the
+  base view, which is where the pill lives).
+- A petak and the prism standing in it both wear that prism's status: green
+  within its band, amber, orange, then red as it crosses each threshold. Never
+  `offline` — that is a state a logger can be in, and a prism is a piece of
+  glass on a stake; it is the total station that goes off the air. A prism with
+  nothing measured yet reports a **null** status and is drawn plain (`UNREAD`),
+  which says "not read" rather than "read and fine". Any `?? 'normal'` on a
+  stake status puts the lie straight back. The
+  ground is painted faintly (`fillOpacity` 0.16) with the outline at full
+  strength — ground that shouts drowns the figure standing on it. Both keep the
+  dark rim, which is what does the work: it is what a thin light shape was
+  missing, and it is what lets either of them carry a colour without losing
+  itself in rip-rap, grass or water. A plain white diamond disappeared into the
+  concrete it stood on.
+- The colour is written as marker `svgStyle`, from `statusColor()`, so the one
+  palette answers for it. `.psv-cell` therefore declares no `fill` or `stroke`
+  at all: a CSS declaration beats a presentation attribute, and it would take
+  the status straight back off. The gate bays set theirs in CSS precisely
+  because they are *not* status-coloured.
+- `plotGrid()` builds the whole station at once, because none of what a petak
+  needs is a property of one line. Each edge is measured in its own direction
+  — along the line from the prism beside it, down the slope from the line
+  below — and takes `PETAK_FILL` of it: the slope belongs to one prism or the
+  next, so what is left between two petak is only the sliver that keeps two
+  dashed outlines apart. One measurement for both edges sized the whole petak
+  off whichever direction happened to be tighter, which drew slivers where the
+  lines are far apart and the stakes are not.
+- What finally limits a petak is the nearest prism *anywhere*, often on
+  another line: three lines step down one slope, and hand placement leaves
+  stakes from different lines a degree apart. `petakRoom()` is the
+  separating-axis test solved for the scale rather than answered yes or no,
+  and it must be a **pair** test — sizing each petak against a neighbour as if
+  the neighbour were the same size holds only while every petak is the same
+  size, which stopped being true the moment each took its measurements from
+  its own patch of ground. Both ends of a pair are held to a hair under the
+  fraction it returns, because that fraction is where they exactly touch and
+  two petak drawn edge to edge read as one shape. Only the lower clamp can let
+  them overlap, and it is there so a prism dropped on top of another still
+  draws something.
 - Marker captions are behind the `Label` pill on the bottom bar (`showLabels` in
   `twin-sphere.js`, remembered in `localStorage` under `twin.labels`); the CSS
   class `sphere--quiet` hides them, hover still reveals one.
@@ -302,6 +723,52 @@ records conventions that are easy to break.
   the chrome proportions means updating `CHROME`, rebuilding, and copying the
   printed `width`/`height`/`content` into `config/dam.php`.
 
+## Weather scene
+
+- Cloud has no sensor. `App\Support\SkyState` infers it from illuminance
+  against what a clear sky would deliver at the current solar elevation
+  (`118000 * sin(elevation)`), and reads the rain gauge beside it — that pair
+  is what separates a dark dry morning (`mendung`) from a dark wet one
+  (`rintik`). Below ~1500 lux of expected light the inference is refused and
+  the state is `malam`, because there is nothing to compare against; measured
+  rain still outranks the hour.
+- Every state carries a `reason` sentence naming both numbers. An illustration
+  that changes the picture has to say what it read, or nobody can check it.
+- `site.sky` merges that reading with the reader's what-if (`skyScenario`).
+  The presets come from the server (`sky.presets`), so the browser cannot paint
+  a scene the service would not have produced, and a forced state is marked
+  `simulated` — the same convention as the simulated clock. It never writes.
+- Cloud is graded into `stageFilter` (less light, less colour) and only the
+  remaining grey is painted by `.sky-veil`; rain takes a second helping of
+  both there, more colour than light, which is the difference between
+  `mendung` and `hujan` at the same illuminance. Everything on top is paint
+  plus one transform — it sits over a sphere that is already animating, so
+  nothing there may force a re-layout.
+- Three layers, each for one cue. `.sky-veil` is weighted to the top of the
+  frame, because overcast lifts the sky towards white long before it darkens
+  the ground — a flat grey over the whole picture reads as a filter switched
+  on. `.sky-haze` is aerial perspective: distance goes first in weather, so
+  the grey collects around the horizon and the near bank keeps its contrast.
+  `.sky-rain` is the two streak sheets.
+- Drizzle and a downpour are not one picture at two opacities: `site.rainSheets`
+  sizes each sheet from the rain figure — drizzle short, slow and close to fog,
+  a downpour long, fast and further apart. Speed is a distance per second, not
+  a duration, because the loop length changes with the drop; a fixed duration
+  would make heavy rain fall slower. A drop is dense at its head and trails off
+  behind it, which the mask's stops draw.
+- A drop is one soft radial blob in its own tile; the tiles are drawn upright
+  and the whole sheet is rotated (`--tilt`), so the fall runs down a streak and
+  the loop translates by exactly one tile (`--fall`). Two earlier shapes were
+  wrong in instructive ways: an angled `repeating-linear-gradient` tiled with
+  `background-size` gave hard 1px diagonals that aliased into moire with a seam
+  crossing the screen every cycle (television static), and a column gradient
+  cut by one `mask-image` put every column's drops on the same rows, which
+  combed. Three drop layers a third of a tile apart is what staggers them, and
+  `--cell` is therefore three times the spacing the reader sees.
+
+- One partial (`partials/sky-layers`) serves the twin stage and the page
+  backdrop. Adding a third surface means including it, not copying it.
+
 ## Icons
 
 - One file, `resources/views/components/icon.blade.php`: a name-to-path map
@@ -311,6 +778,67 @@ records conventions that are easy to break.
   conversation, or a rotated back-arrow standing in for a chevron, is how the
   set drifts. `x-icon` falls back to `sensor` when a name is unknown, so a typo
   shows up as the wrong glyph rather than a blank space.
+
+## Instrument catalogue
+
+- The parameter lists for the ADR prisms, the vibrating-wire piezometer and the
+  spillway gates are matched against a real installation — the Ciawi dump on
+  the build machine (`parameter_prisma`, `parameter_avw`, `parameter_pintu`).
+  Only the *catalogue* is taken from there: names, units, kinds. The numbers
+  stay `ReadingSimulator`'s, because another dam's measurements are that dam's.
+- What that alignment settled: a vibrating wire reports its head as **mH2O**,
+  not metres; and an AWGC reports **three-phase motor current per leaf**
+  beside the opening, which is the channel an operator watches for a hoist
+  going out of balance; and the opening is a **length in cm**, not a percentage
+  — the hoist reports how far the leaf is up, and that is what a person says
+  when they open a gate. The fraction of the stroke is the derived figure.
+- A leaf's stroke is `meta.height_cm` on its marker, and it bounds everything:
+  the simulator, the slider, and the order. An order past it is **refused**,
+  never trimmed — quietly reducing 140 cm to 100 would record an order nobody
+  gave and leave the operator believing the gate is going somewhere it is not.
+
+## Spillway gates
+
+- A gate order is a record, not a reading. `gate_commands` says who asked for
+  what opening and when — the part a flood report has to be able to quote —
+  while `gate_opening_1..3` say where the leaves actually are. Keeping them
+  apart is also what lets the simulator drive a gate towards an order instead
+  of overwriting it with the next generated row.
+- `ReadingSimulator` is otherwise a pure function of (metric, timestamp); the
+  gates are the documented exception, and they have to be, because a gate an
+  operator opened stays open. Orders are read once per station and cached, so
+  the history is still reproducible — it just depends on the orders as well as
+  the clock. Call `forgetOrders()` after writing one.
+- A leaf travels to its order over `GATE_TRAVEL` and then holds, which is what
+  puts a ramp on the chart instead of a step. `orderGate()` posts this
+  instant's opening and target straight away so the panel shows the order at
+  once — with the opening still at the sill, because the order has been given
+  and the gate has not moved.
+- The waves behind the three leaves are seeded per *gate*, not per metric.
+  Seeded per metric, `gate_opening` and the three parts under it were three
+  different noises and the headline disagreed with its own leaves.
+- Percent and centimetres are both printed, and neither alone is the answer:
+  the percentage is what the hoist reports, the stroke (`meta.height_cm`) is
+  what the water sees. A leaf with no recorded stroke prints no centimetres
+  rather than a guess.
+- The control is a dialog opened from the stage's top-right chrome, beside the
+  sky clock (or by picking a leaf on the sphere), teleported to `body` like
+  every other dialog. It sits there rather than on the bottom bar because the
+  bottom bar belongs to the stage and this belongs to one station — it is the one
+  control in the app that writes an order to a structure, so it asks for the
+  reader's whole attention instead of sitting in a column they scroll past,
+  and the summary panel stays what it is: a reading of the station.
+- Three bays stand eight degrees apart, so a gate chip has to be narrower than
+  that or the three run into one another. Everything on it is stacked rather
+  than laid side by side, and the centimetres wait for `sphere--near` — the
+  same rule the prism figures follow, for the same reason.
+- The bay is a projected polygon and the filled shape inside it is the
+  **leaf**, riding up out of the bay as the gate opens and covering the whole
+  bay when it is shut — the way the real one moves. It was first drawn as the
+  gap *under* the leaf, which put the shape on screen travelling the opposite
+  way to the thing it stands for: a gate closing looked like a gate opening.
+  The leaf is steel-coloured for the same reason; blue would have said water
+  where the steel is.
 
 ## Access control
 
@@ -407,6 +935,11 @@ records conventions that are easy to break.
 
 ## Assets
 
+- The browser icon is the ministry logo, scaled by `tools/build_favicon.py`
+  into `assets/icon/logopu-32.png`, a 180px apple-touch icon and
+  `favicon.ico`. Not the 598px original: sixty-five kilobytes for something
+  drawn at sixteen pixels, paid on every page load. Re-run the script after
+  replacing `assets/logopu.png`.
 - Dam backgrounds and panoramas are generated by the Python scripts in `tools/`
   from `D:\BE Software\Panoramic 360 fix`. Re-run them instead of editing files
   under `public/assets/` by hand.

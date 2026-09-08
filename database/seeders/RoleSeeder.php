@@ -39,6 +39,10 @@ class RoleSeeder extends Seeder
                     'maintenance.request',
                     'maintenance.reply',
                     'stations.move',
+                    // Working the spillway is the control room's job.
+                    'gates.control',
+                    // So is the board on the wall.
+                    'dashboard.arrange',
                     'alerts.handle',
                     'reports.create',
                 ],

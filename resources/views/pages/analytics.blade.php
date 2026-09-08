@@ -62,6 +62,14 @@
 
             {{-- Grafik: every parameter, two per row, flowing down --------- --}}
             <div x-show="mode === 'grafik'" class="grid gap-3.5 xl:grid-cols-2">
+                {{-- A screen with nothing on it has to say why, or the reader
+                     cannot tell the station apart from a broken page. --}}
+                <div class="glass glass--panel p-6 text-center xl:col-span-2"
+                     x-show="!cards.length" x-cloak>
+                    <p class="text-[13px] font-semibold text-white">Belum ada parameter untuk digambar</p>
+                    <p class="mt-1 text-[11.5px] text-mist-300">Pilih stasiun lain, atau «Semua stasiun» untuk membandingkan parameter utamanya.</p>
+                </div>
+
                 <template x-for="card in cards" :key="card.id">
                     <button type="button"
                             class="glass glass--panel p-3.5 text-left transition hover:ring-1 hover:ring-brand-400/40"
@@ -144,10 +152,16 @@
                             <button type="button"
                                     class="rounded-xl px-3 py-1.5 text-[11.5px] font-medium transition"
                                     :aria-pressed="isPicked(choice)"
-                                    :disabled="! canPick(choice)"
-                                    :title="canPick(choice)
-                                        ? (choice.metric.unit || 'tanpa satuan')
-                                        : `Satuan ${choice.metric.unit || '—'} tidak bisa ikut: grafik sudah memakai dua sumbu`"
+                                    :disabled="! canPick(choice) || !! lockedReason(choice)"
+                                    {{-- Every refusal says why. The last picked
+                                         parameter cannot be dropped — the chart
+                                         must keep a series — and that used to
+                                         happen in silence, which reads as a
+                                         chart that never changes. --}}
+                                    :title="lockedReason(choice)
+                                        ?? (canPick(choice)
+                                            ? (choice.metric.unit || 'tanpa satuan')
+                                            : `Satuan ${choice.metric.unit || '—'} tidak bisa ikut: grafik sudah memakai dua sumbu`)"
                                     :class="isPicked(choice)
                                         ? 'bg-brand-500/85 text-white'
                                         : (canPick(choice)
@@ -162,8 +176,15 @@
                     </div>
                 </div>
 
+                <p class="mb-2 text-[11.5px] text-state-bahaya" x-show="error" x-cloak x-text="error"></p>
+
+                {{-- The canvas dims while its numbers are in flight and comes
+                     back with them, so a swap is one movement instead of a
+                     stale picture replaced by a new one. --}}
                 <div class="relative h-[420px] w-full max-lg:h-[320px] max-sm:h-[260px]">
-                    <div class="h-full w-full" data-chart x-ref="analysis"></div>
+                    <div class="h-full w-full transition-opacity duration-300"
+                         :class="loading && 'opacity-40'"
+                         data-chart x-ref="analysis"></div>
 
                     <p class="absolute inset-0 grid place-items-center text-center text-[12px] text-mist-400"
                        x-show="primary && ! loading && ! primary.points?.length" x-cloak

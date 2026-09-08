@@ -67,6 +67,9 @@ Alpine.store('site', {
     maintenanceUnread: 0,
     abilities: [],
 
+    /** `auto` follows the instruments; any other code forces a what-if. */
+    skyScenario: 'auto',
+
     /** Ability codes from config/access.php, as granted to the signed-in role. */
     can(ability) {
         return this.abilities.includes(ability);
@@ -424,10 +427,100 @@ Alpine.store('site', {
         return this.time.mode === 'custom' ? '0ms' : '900ms';
     },
 
+    /**
+     * What the sky is doing, or what the reader asked it to be doing.
+     *
+     * `auto` is the instruments' own reading (illuminance against the rain
+     * gauge); the other codes are the server's presets, marked `simulated` so
+     * the chrome can say so. Nothing here writes to the database — it is a
+     * what-if, not an edit.
+     */
+    get sky() {
+        const live = this.environment?.sky ?? { code: 'cerah', label: 'Cerah', cloud: 0, rain: 0, reason: '' };
+
+        if (this.skyScenario === 'auto') {
+            return { ...live, simulated: false };
+        }
+
+        const preset = live.presets?.[this.skyScenario];
+
+        if (!preset) {
+            return { ...live, simulated: false };
+        }
+
+        return {
+            ...preset,
+            reason: 'Skenario manual — data sensor tidak berubah.',
+            simulated: true,
+        };
+    },
+
+    get skyPresets() {
+        return this.environment?.sky?.presets ?? {};
+    },
+
+    setSkyScenario(code) {
+        this.skyScenario = code;
+    },
+
     get stageFilter() {
         const grade = this.scene.grade ?? {};
+        const cloud = this.sky.cloud ?? 0;
+        const rain = this.sky.rain ?? 0;
 
-        return `brightness(${grade.brightness ?? 1}) contrast(${grade.contrast ?? 1}) saturate(${grade.saturate ?? 1})`;
+        /*
+        | Cloud takes light and colour out of the picture; the sphere and the
+        | page backdrop are graded rather than covered, so the veil on top only
+        | has to add the grey.
+        |
+        | Rain takes a second helping of both, and more colour than light: a
+        | wet valley is greyer than a merely overcast one at the same
+        | illuminance, which is the difference the reader is meant to see
+        | between `mendung` and `hujan`.
+        */
+        const brightness = (grade.brightness ?? 1) * (1 - 0.34 * cloud - 0.1 * rain);
+        const contrast = (grade.contrast ?? 1) * (1 - 0.12 * cloud - 0.1 * rain);
+        const saturate = (grade.saturate ?? 1) * (1 - 0.45 * cloud - 0.25 * rain);
+
+        return `brightness(${brightness.toFixed(3)}) contrast(${contrast.toFixed(3)}) saturate(${saturate.toFixed(3)})`;
+    },
+
+    /**
+     * The two sheets of rain, sized by how hard it is raining.
+     *
+     * Drizzle and a downpour are not the same picture at two opacities:
+     * drizzle is short, slow and close together — nearly fog — and a downpour
+     * is long, fast and further apart. Spacing, drop length and fall speed all
+     * come from the one figure, so the scenarios differ the way weather does.
+     *
+     * Speed is a distance per second, not a duration: the loop length changes
+     * with the drop, so a fixed duration would make heavy rain fall slower.
+     */
+    get rainSheets() {
+        const rain = Math.min(1, Math.max(0, this.sky.rain ?? 0));
+
+        const sheet = (near) => {
+            const dash = near ? 14 + 52 * rain : 9 + 28 * rain;
+            const gap = near ? 74 - 30 * rain : 52 - 20 * rain;
+            const fall = Math.round(dash + gap);
+            const speed = near ? 300 + 820 * rain : 180 + 430 * rain;
+
+            // A tile carries three staggered columns, so it is three times the
+            // spacing the reader actually sees between streaks.
+            const column = near ? 26 - 8 * rain : 15 - 4 * rain;
+
+            return {
+                opacity: near ? 0.26 + 0.4 * rain : 0.18 + 0.24 * rain,
+                '--cell': `${(column * 3).toFixed(1)}px`,
+                // A drop seen from close by is wider as well as longer.
+                '--thick': `${(near ? 1.15 + 0.5 * rain : 0.75 + 0.25 * rain).toFixed(2)}px`,
+                '--dash': `${dash.toFixed(1)}px`,
+                '--fall': `${fall}px`,
+                '--speed': `${(fall / speed).toFixed(3)}s`,
+            };
+        };
+
+        return { near: sheet(true), far: sheet(false) };
     },
 
     get warmth() {
@@ -441,6 +534,26 @@ Alpine.store('site', {
 
     markerByCode(code) {
         return this.markers.find((marker) => marker.code === code);
+    },
+
+    /**
+     * The stations worth looking at, worst first, and a count of the rest.
+     *
+     * Alphabetical order put ADR-01 at the top because of its first letter,
+     * and left the reader scrolling a box of green rows to find the one that
+     * was not — which is the only reason the list is on the page. Seventeen
+     * stations that are all fine is one fact, not seventeen rows.
+     */
+    urgentMarkers(type = '') {
+        const rank = { bahaya: 4, siaga: 3, waspada: 2, offline: 1, normal: 0 };
+        const shown = this.markers.filter((marker) => !type || marker.type === type);
+        const sorted = [...shown].sort((a, b) => (rank[b.status] ?? 0) - (rank[a.status] ?? 0)
+            || a.name.localeCompare(b.name));
+
+        return {
+            worst: sorted.filter((marker) => (rank[marker.status] ?? 0) > 0),
+            calm: sorted.filter((marker) => (rank[marker.status] ?? 0) === 0),
+        };
     },
 
     /**
@@ -486,6 +599,19 @@ Alpine.store('viewer', {
     range: '24h',
     error: null,
 
+    /** Which spillway leaf the reader picked on the sphere, if any. */
+    gate: null,
+    gateBusy: null,
+    gateError: null,
+
+    /*
+    | The gate control is a dialog, not a panel section. It is the one place
+    | in the app that writes an order to a structure, so it asks for the
+    | reader's whole attention rather than sitting in a column they scroll
+    | past — and the summary panel stays what it is, a reading of the station.
+    */
+    gatesOpen: false,
+
     async open360(code) {
         this.open = true;
         this.loading = true;
@@ -529,11 +655,86 @@ Alpine.store('viewer', {
         return this.station?.metrics.find((metric) => metric.key === key) ?? null;
     },
 
+    /* ----------------------------------------------------------- gates */
+
+    /** The spillway leaves this station carries, in catalogue order. */
+    get gates() {
+        return (this.station?.hotspots ?? []).filter((item) => item.type === 'gate');
+    },
+
+    /** A leaf's own parameter: where it is, or where it was told to go. */
+    gateMetric(hotspot, kind = 'opening') {
+        const number = hotspot.meta?.gate;
+
+        return this.metric(kind === 'target' ? `gate_target_${number}` : hotspot.metric_key);
+    },
+
+    /** How far a leaf can travel, in centimetres. */
+    gateStroke(hotspot) {
+        return Number(hotspot.meta?.height_cm ?? 0) || 100;
+    },
+
+    /**
+     * The same figure as a fraction of the stroke.
+     *
+     * Centimetres is what the hoist reports and what an operator opens a gate
+     * by; the percentage is the derived one, and it is there because a length
+     * means nothing until you know how far the leaf can go.
+     */
+    gatePercent(hotspot, kind = 'opening') {
+        const value = this.gateMetric(hotspot, kind)?.value;
+
+        return value === null || value === undefined
+            ? null
+            : Math.round((value / this.gateStroke(hotspot)) * 100);
+    },
+
+    /** Open the gate control, on one leaf if the reader picked one. */
+    openGates(gate = null) {
+        this.gate = gate ?? this.gate;
+        this.gateError = null;
+        this.gatesOpen = true;
+    },
+
+    closeGates() {
+        this.gatesOpen = false;
+    },
+
+    /**
+     * Order a leaf to an opening, in centimetres.
+     *
+     * The reply is the order as it was recorded, not the position of the
+     * gate: the leaf takes minutes to travel and the panel says so. Refetching
+     * the station is what brings the new target back onto the chart.
+     */
+    async orderGate(hotspot, opening) {
+        const number = hotspot.meta?.gate;
+
+        if (!this.code || !number) {
+            return;
+        }
+
+        this.gateBusy = number;
+        this.gateError = null;
+
+        try {
+            await postJson(`/api/stations/${this.code}/gates/${number}`, { opening: Number(opening) });
+            this.station = await getJson(`/api/stations/${this.code}`, { range: this.range });
+        } catch (error) {
+            this.gateError = error.message;
+        } finally {
+            this.gateBusy = null;
+        }
+    },
+
     close() {
         this.open = false;
         this.station = null;
         this.code = null;
         this.activeMetric = null;
+        this.gate = null;
+        this.gateError = null;
+        this.gatesOpen = false;
 
         const url = new URL(window.location.href);
         url.pathname = '/digital-twin';
@@ -620,14 +821,151 @@ Alpine.data('metricSpark', (metricKey) => ({
  * ECharts instances are never kept on this state — Alpine's proxy and a canvas
  * library do not mix. `getInstanceByDom` in the chart helpers is the registry.
  */
+/**
+ * The dashboard's trend panel: one series, one range switch.
+ *
+ * It used to borrow `analyticsBoard`, which now serves a grid and a
+ * multi-parameter chart and no longer answers `load()` — so the panel drew
+ * nothing. A panel this small owns its own component.
+ */
+Alpine.data('trendChart', (stations) => ({
+    stations,
+    range: '24h',
+    loading: false,
+    payload: null,
+
+    init() {
+        this.load();
+        window.addEventListener('resize', () => resizeCharts(this.$root));
+    },
+
+    setRange(range) {
+        this.range = range;
+        this.load();
+    },
+
+    async load() {
+        const station = this.stations[0];
+        const metric = station?.metrics?.[0];
+
+        if (!station || !metric) {
+            return;
+        }
+
+        this.loading = true;
+
+        try {
+            this.payload = await getJson(`/api/stations/${station.code}/series/${metric.key}`, {
+                range: this.range,
+            });
+
+            await this.$nextTick();
+
+            // The component can be torn down while the engine is importing;
+            // `echarts.init(undefined)` is a hard error, not an empty chart.
+            if (!this.$refs.chart) {
+                return;
+            }
+
+            const chart = await seriesChart(this.$refs.chart, [{
+                name: this.payload.metric.label,
+                points: this.payload.points,
+                type: this.payload.metric.chart_type,
+            }], {
+                unit: this.payload.metric.unit,
+                thresholds: [
+                    { value: this.payload.metric.normal_max, label: 'Batas Normal', color: '#34d399' },
+                    { value: this.payload.metric.warning, label: 'Waspada', color: '#fbbf24' },
+                ],
+            });
+
+            chart.resize();
+        } finally {
+            this.loading = false;
+        }
+    },
+
+    /**
+     * How much room is left before the next threshold.
+     *
+     * The chart already draws those lines, but they sit far outside the range
+     * the reader is looking at — a reservoir wandering between 93.7 and 94.0
+     * against a normal limit of 95.5 draws a wiggle with the reference three
+     * screens above it. Putting the gap in words costs one line and answers
+     * the question the picture cannot: is this comfortable or not.
+     */
+    get headroom() {
+        const metric = this.payload?.metric;
+        const last = this.payload?.points?.at(-1)?.v;
+
+        if (!metric || last === null || last === undefined) {
+            return null;
+        }
+
+        const next = [
+            { value: metric.normal_max, label: 'batas normal' },
+            { value: metric.warning, label: 'ambang waspada' },
+            { value: metric.alert, label: 'ambang siaga' },
+            { value: metric.critical, label: 'ambang bahaya' },
+        ]
+            .filter((mark) => mark.value !== null && mark.value !== undefined && mark.value > last)
+            .sort((a, b) => a.value - b.value)[0];
+
+        if (!next) {
+            return null;
+        }
+
+        const gap = next.value - last;
+
+        return {
+            label: next.label,
+            // Two decimals only where the gap is small enough to need them.
+            gap: gap.toLocaleString('id-ID', { maximumFractionDigits: gap < 10 ? 2 : 0 }),
+            unit: metric.unit ?? '',
+        };
+    },
+}));
+
+/**
+ * What this screen was asked to show, which is only ever the address bar.
+ *
+ * The state used to live in `localStorage`, and the menu entry could
+ * therefore never be a neutral way in: it always reopened whatever station
+ * happened to be looked at last. It lives in the URL now — the Grafik button
+ * on Data Sensor names a station, every control writes its choice back, and a
+ * plain visit is a plain visit. That also makes the view linkable, which a
+ * remembered preference never was.
+ *
+ * `detail` and `kisi` are the names the two views used to have; a link
+ * written then still resolves.
+ */
+function analyticsQuery() {
+    const params = new URLSearchParams(window.location.search);
+    const range = params.get('rentang');
+    const mode = params.get('tampilan');
+
+    return {
+        scope: params.get('stasiun'),
+        metric: params.get('parameter'),
+        range: ['24h', '7d', '30d'].includes(range) ? range : null,
+        mode: (mode === 'analisa' || mode === 'detail') ? 'analisa' : (mode ? 'grafik' : null),
+    };
+}
+
 Alpine.data('analyticsBoard', (stations) => ({
     stations,
+    asked: analyticsQuery(),
     mode: 'grafik',
-    scope: localStorage.getItem('analytics.scope') ?? (stations[0]?.code ?? ''),
-    range: localStorage.getItem('analytics.range') ?? '7d',
+    // Every station's headline parameter, which is the one view that answers
+    // a question the reader has not asked yet.
+    scope: analyticsQuery().scope ?? 'semua',
+    range: analyticsQuery().range ?? '7d',
 
     /** Series per grid card, keyed by card id. */
     data: {},
+
+    /** What went wrong drawing the combined chart, if anything did. */
+    error: null,
 
     /** What `analisa` is drawing: `{ code, key }` in the order they were picked. */
     picked: [],
@@ -635,12 +973,12 @@ Alpine.data('analyticsBoard', (stations) => ({
     loading: false,
 
     init() {
-        const stored = localStorage.getItem('analytics.mode');
-
-        this.mode = stored === 'analisa' || stored === 'detail' ? 'analisa' : 'grafik';
+        // A named parameter is a request for the combined chart; that is the
+        // only view that draws one parameter on its own.
+        this.mode = this.asked.mode ?? (this.asked.metric ? 'analisa' : 'grafik');
 
         if (!this.stations.some((station) => station.code === this.scope) && this.scope !== 'semua') {
-            this.scope = this.stations[0]?.code ?? '';
+            this.scope = 'semua';
         }
 
         // Cards draw when they come into view: sixteen charts built at once is
@@ -662,7 +1000,12 @@ Alpine.data('analyticsBoard', (stations) => ({
             });
         }, { rootMargin: '160px' });
 
-        this.picked = this.choices.slice(0, 1).map((choice) => ({ code: choice.code, key: choice.metric.key }));
+        const named = this.asked.metric
+            ? this.choices.find((choice) => choice.metric.key === this.asked.metric)
+            : null;
+
+        this.picked = (named ? [named] : this.choices.slice(0, 1))
+            .map((choice) => ({ code: choice.code, key: choice.metric.key }));
 
         if (this.mode === 'analisa') {
             this.$nextTick(() => this.loadAnalysis());
@@ -672,6 +1015,42 @@ Alpine.data('analyticsBoard', (stations) => ({
     },
 
     /* --------------------------------------------------------- what exists */
+
+    /**
+     * Every parameter the current scope offers.
+     *
+     * One station: all of its parameters. Every station: the headline
+     * parameter of each, which is what makes them comparable at a glance.
+     */
+    get choices() {
+        if (this.scope === 'semua') {
+            return this.stations
+                .filter((station) => station.metrics.length)
+                .map((station) => ({
+                    id: station.code,
+                    code: station.code,
+                    station: station.name,
+                    metric: station.metrics[0],
+                }));
+        }
+
+        const station = this.stations.find((item) => item.code === this.scope);
+
+        return (station?.metrics ?? []).map((metric) => ({
+            id: `${station.code}:${metric.key}`,
+            code: station.code,
+            station: station.name,
+            metric,
+        }));
+    },
+
+    get cards() {
+        return this.choices;
+    },
+
+    cardById(id) {
+        return this.choices.find((choice) => choice.id === id) ?? null;
+    },
 
     /**
      * Every parameter the current scope offers.
@@ -812,6 +1191,13 @@ Alpine.data('analyticsBoard', (stations) => ({
         return this.pickedUnits.length < 2 || this.pickedUnits.includes(choice.metric.unit ?? '');
     },
 
+    /** Why this parameter cannot be removed, if it cannot. */
+    lockedReason(choice) {
+        return this.isPicked(choice) && this.picked.length === 1
+            ? 'Grafik harus punya minimal satu parameter — tambahkan yang lain dulu.'
+            : null;
+    },
+
     togglePick(choice) {
         if (!this.canPick(choice)) {
             return;
@@ -819,8 +1205,14 @@ Alpine.data('analyticsBoard', (stations) => ({
 
         const already = this.isPicked(choice);
 
+        /*
+        | The chart must keep at least one series, and that refusal used to be
+        | silent: tapping the only picked parameter to swap it did nothing at
+        | all, which reads as a chart that never changes. The chip says so
+        | now, and the click is left to do nothing on purpose.
+        */
         if (already && this.picked.length === 1) {
-            return; // The chart must keep at least one series.
+            return;
         }
 
         this.picked = already
@@ -855,6 +1247,7 @@ Alpine.data('analyticsBoard', (stations) => ({
         }
 
         this.loading = true;
+        this.error = null;
 
         try {
             const payloads = await Promise.all(this.picked.map((item) => getJson(
@@ -867,6 +1260,10 @@ Alpine.data('analyticsBoard', (stations) => ({
             await this.$nextTick();
 
             const units = [...new Set(payloads.map((payload) => payload.metric.unit ?? ''))].slice(0, 2);
+
+            if (!this.$refs.analysis) {
+                return;
+            }
 
             const chart = await seriesChart(this.$refs.analysis, payloads.map((payload, index) => ({
                 name: this.picked.length > 1 && this.scope === 'semua'
@@ -884,6 +1281,14 @@ Alpine.data('analyticsBoard', (stations) => ({
 
             // The panel may have been hidden when the instance was created.
             chart.resize();
+        } catch (error) {
+            /*
+            | Without this the rejection went nowhere: the old chart stayed on
+            | screen, correct-looking and stale, and the reader was told
+            | nothing. A picture that quietly refuses to update is worse than
+            | no picture.
+            */
+            this.error = error.message;
         } finally {
             this.loading = false;
         }
@@ -896,9 +1301,28 @@ Alpine.data('analyticsBoard', (stations) => ({
 
     /* --------------------------------------------------------------- modes */
 
+    /**
+     * Keep the address bar on what is on screen.
+     *
+     * This is the only place the view is kept, so a reload, a bookmark or a
+     * copied address all come back to the same chart. Written with
+     * `replaceState`, because changing the station is not a page the back
+     * button should have to walk through.
+     */
+    syncUrl() {
+        const url = new URL(window.location.href);
+
+        url.searchParams.set('stasiun', this.scope);
+        url.searchParams.set('rentang', this.range);
+        url.searchParams.set('tampilan', this.mode);
+        url.searchParams.delete('parameter');
+
+        window.history.replaceState({}, '', url);
+    },
+
     setMode(mode) {
         this.mode = mode;
-        localStorage.setItem('analytics.mode', mode);
+        this.syncUrl();
 
         /*
         | A chart built while its container was `display: none` measured zero
@@ -941,7 +1365,7 @@ Alpine.data('analyticsBoard', (stations) => ({
 
     setScope(code) {
         this.scope = code;
-        localStorage.setItem('analytics.scope', code);
+        this.syncUrl();
 
         // The parameters on offer changed with the scope; keep the ones that
         // are still on offer, and fall back to the first if none are.
@@ -960,7 +1384,7 @@ Alpine.data('analyticsBoard', (stations) => ({
 
     setRange(range) {
         this.range = range;
-        localStorage.setItem('analytics.range', range);
+        this.syncUrl();
         this.refresh();
     },
 
@@ -1002,6 +1426,362 @@ Alpine.data('analyticsBoard', (stations) => ({
         return `${value > 0 ? '+' : ''}${this.number(value)}`;
     },
 }));
+
+/**
+ * Arranging the screen, for everybody.
+ *
+ * A store rather than a component, because the two things it arranges live in
+ * different Blade sections: the page's own grid and the summary column down
+ * the right. One control has to reach both — ordering the board and leaving
+ * the column beside it fixed would be half a feature.
+ *
+ * Order is held in the document, because moving a card *is* moving a node and
+ * a second copy of the order is a second thing to keep in step. Everything the
+ * document cannot say — which cards are hidden, how wide they are, what each
+ * is pointed at — is held here.
+ *
+ * Dragging is offered on the board, but every move it can make is also on a
+ * pair of arrow buttons: a control that answers only to a pointer is one a
+ * keyboard cannot reach, and this one writes for the whole control room.
+ */
+Alpine.store('arrange', {
+    ready: false,
+    editing: false,
+    saving: false,
+    error: null,
+    dragging: null,
+
+    /** Which card's contents are open, and the picker's filter. */
+    optionsFor: null,
+    search: '',
+
+    choices: { board: {}, panel: {} },
+    labels: { board: {}, panel: {} },
+    saved: { board: [], panel: [] },
+    hidden: { board: {}, panel: {} },
+    span: { board: {}, panel: {} },
+    options: { board: {}, panel: {} },
+
+    /**
+     * Handed the layouts and the offer by whichever page can arrange.
+     *
+     * State only — the server already rendered the saved arrangement, so
+     * there is nothing to move. Reordering it here anyway re-parented every
+     * card while Alpine was still initialising, which tears down and rebuilds
+     * the components inside them: the trend chart came back with its `$refs`
+     * pointing at a dead subtree and `echarts.init(undefined)` threw
+     * "Cannot read properties of undefined (reading 'getAttribute')".
+     */
+    boot(layouts, choices) {
+        this.choices = choices;
+        this.saved = layouts;
+        this.seed();
+        this.ready = true;
+    },
+
+    /** Take the saved arrangement into state, touching nothing on the page. */
+    seed() {
+        Object.entries(this.saved).forEach(([surface, cards]) => {
+            this.hidden[surface] = Object.fromEntries(cards.map((c) => [c.key, Boolean(c.hidden)]));
+            this.span[surface] = Object.fromEntries(cards.map((c) => [c.key, c.span]));
+            this.options[surface] = Object.fromEntries(cards.map((c) => [c.key, { ...c.options }]));
+            this.labels[surface] = Object.fromEntries(cards.map((c) => [c.key, c.label]));
+        });
+    },
+
+    /**
+     * Put every surface back to the arrangement that was last saved.
+     *
+     * Only for cancelling, and a card is moved only when it is not already
+     * where it belongs — an unconditional `appendChild` is a re-parent, and a
+     * re-parent costs the components inside the card their lives.
+     */
+    restore() {
+        this.seed();
+
+        Object.entries(this.saved).forEach(([surface, cards]) => {
+            cards.forEach((card, index) => {
+                const el = this.cardEl(surface, card.key);
+
+                if (!el) {
+                    return;
+                }
+
+                el.style.setProperty('--span', card.span);
+                el.classList.toggle(this.offClass(surface), Boolean(card.hidden));
+
+                const siblings = [...el.parentElement.querySelectorAll(this.selector(surface))];
+
+                if (siblings.indexOf(el) !== index) {
+                    el.parentElement.insertBefore(el, siblings[index] ?? null);
+                }
+            });
+        });
+    },
+
+    open() {
+        this.editing = true;
+        this.error = null;
+    },
+
+    cancel() {
+        this.editing = false;
+        this.optionsFor = null;
+        this.error = null;
+        this.restore();
+    },
+
+    /* ------------------------------------------------------- the document */
+
+    selector: (surface) => (surface === 'panel' ? '[data-panel-card]' : '[data-card]'),
+    offClass: (surface) => (surface === 'panel' ? 'panel-card--off' : 'dash-card--off'),
+
+    cardEl(surface, key) {
+        const attribute = surface === 'panel' ? 'data-panel-card' : 'data-card';
+
+        return document.querySelector(`[${attribute}="${key}"]`);
+    },
+
+    /** The arrangement of one surface, in the order the document has it. */
+    read(surface) {
+        return [...document.querySelectorAll(this.selector(surface))].map((el) => {
+            const key = el.dataset.panelCard ?? el.dataset.card;
+
+            return {
+                key,
+                span: this.span[surface]?.[key] ?? 6,
+                hidden: Boolean(this.hidden[surface]?.[key]),
+                options: this.options[surface]?.[key] ?? {},
+            };
+        });
+    },
+
+    /* ---------------------------------------------------------- the moves */
+
+    move(surface, key, step) {
+        const el = this.cardEl(surface, key);
+        const neighbour = step < 0 ? el?.previousElementSibling : el?.nextElementSibling;
+
+        if (!el || !neighbour || !neighbour.matches(this.selector(surface))) {
+            return;
+        }
+
+        el.parentElement.insertBefore(step < 0 ? el : neighbour, step < 0 ? neighbour : el);
+        el.querySelector('.dash-card__act')?.focus();
+    },
+
+    setSpan(surface, key, span) {
+        this.span[surface] = { ...this.span[surface], [key]: Number(span) };
+        this.cardEl(surface, key)?.style.setProperty('--span', Number(span));
+    },
+
+    spanOf(surface, key) {
+        return this.span[surface]?.[key] ?? 6;
+    },
+
+    isHidden(surface, key) {
+        return Boolean(this.hidden[surface]?.[key]);
+    },
+
+    toggleHidden(surface, key) {
+        const next = !this.isHidden(surface, key);
+
+        this.hidden[surface] = { ...this.hidden[surface], [key]: next };
+        this.cardEl(surface, key)?.classList.toggle(this.offClass(surface), next);
+    },
+
+    /* ---------------------------------------------------------- dragging */
+
+    lift(event, key) {
+        if (!this.editing || this.cardEl('board', key)?.dataset.fixed) {
+            event.preventDefault();
+
+            return;
+        }
+
+        this.dragging = key;
+        event.dataTransfer.effectAllowed = 'move';
+        // Firefox will not start a drag without something on the transfer.
+        event.dataTransfer.setData('text/plain', key);
+    },
+
+    hover(key) {
+        if (!this.dragging || this.dragging === key) {
+            return;
+        }
+
+        const moving = this.cardEl('board', this.dragging);
+        const over = this.cardEl('board', key);
+
+        if (!moving || !over || over.dataset.fixed) {
+            return;
+        }
+
+        const after = moving.compareDocumentPosition(over) & Node.DOCUMENT_POSITION_FOLLOWING;
+
+        over.parentElement.insertBefore(moving, after ? over.nextSibling : over);
+    },
+
+    /* ------------------------------------------------- what a card shows */
+
+    openOptions(surface, key) {
+        this.optionsFor = { surface, key };
+        this.search = '';
+    },
+
+    closeOptions() {
+        this.optionsFor = null;
+    },
+
+    get cardLabel() {
+        const at = this.optionsFor;
+
+        return at ? this.labels[at.surface]?.[at.key] ?? '' : '';
+    },
+
+    get openChoices() {
+        const at = this.optionsFor;
+
+        return at ? this.choices[at.surface]?.[at.key] ?? {} : {};
+    },
+
+    optionOf(name) {
+        const at = this.optionsFor;
+
+        return at ? this.options[at.surface]?.[at.key]?.[name] : undefined;
+    },
+
+    setOption(name, value) {
+        const at = this.optionsFor;
+
+        if (!at) {
+            return;
+        }
+
+        const surface = { ...this.options[at.surface] };
+
+        surface[at.key] = { ...(surface[at.key] ?? {}), [name]: value };
+        this.options[at.surface] = surface;
+    },
+
+    picks(name) {
+        const value = this.optionOf(name);
+
+        return Array.isArray(value) ? value : [];
+    },
+
+    isPicked(name, value) {
+        return this.picks(name).includes(value);
+    },
+
+    /**
+     * Add or drop one choice, in the order they were picked.
+     *
+     * Order matters for the headline row — the tiles come out in the order
+     * they were chosen — so a re-pick goes to the end rather than back where
+     * it was.
+     */
+    togglePick(name, value, max) {
+        const picked = this.picks(name);
+        const next = picked.includes(value)
+            ? picked.filter((item) => item !== value)
+            : [...picked, value];
+
+        if (next.length > (max ?? next.length)) {
+            return;
+        }
+
+        this.setOption(name, next);
+    },
+
+    /**
+     * The choices for a picker, by station and filtered by the search box.
+     *
+     * A hundred and forty-six parameters is a list nobody reads top to bottom.
+     * The labels arrive as `Station · Parameter`, so the part before the dot is
+     * the heading and the search runs over the whole thing — an operator
+     * looking for a piezometer types either half of its name.
+     */
+    grouped(spec) {
+        const query = this.search.trim().toLowerCase();
+        const groups = new Map();
+
+        Object.entries(spec.choices ?? {}).forEach(([value, label]) => {
+            if (query && !label.toLowerCase().includes(query)) {
+                return;
+            }
+
+            const [station, parameter] = label.split(' · ');
+            const rows = groups.get(station) ?? [];
+
+            rows.push({ value, label: parameter ?? label });
+            groups.set(station, rows);
+        });
+
+        return [...groups].map(([station, rows]) => ({ station, rows }));
+    },
+
+    /* ----------------------------------------------------------- writing */
+
+    async save() {
+        this.saving = true;
+        this.error = null;
+
+        try {
+            await postJson('/api/dashboard/layout', {
+                board: this.read('board'),
+                panel: this.read('panel'),
+            });
+
+            /*
+            | A reload, because what a card *shows* is rendered by the server:
+            | a different station on the chart or a different set of headline
+            | tiles is a different page, not a rearranged one. The order and
+            | the widths would have survived without it; the contents would
+            | not, and a screen that half-updated would be worse than one that
+            | took a second.
+            */
+            window.location.reload();
+        } catch (error) {
+            this.error = error.message;
+            this.saving = false;
+        }
+    },
+
+    /**
+     * Take an arrangement somebody already thought about.
+     *
+     * Written straight through rather than applied to the document first: a
+     * preset changes what the cards *show*, and that is rendered by the
+     * server. Reading the result back is what the reload is for.
+     */
+    async usePreset(board, panel) {
+        this.saving = true;
+        this.error = null;
+
+        try {
+            await postJson('/api/dashboard/layout', { board, panel });
+            window.location.reload();
+        } catch (error) {
+            this.error = error.message;
+            this.saving = false;
+        }
+    },
+
+    /** Saving nothing is the reset: the catalogue rebuilds both surfaces. */
+    async reset() {
+        this.saving = true;
+        this.error = null;
+
+        try {
+            await postJson('/api/dashboard/layout', { board: [], panel: [] });
+            window.location.reload();
+        } catch (error) {
+            this.error = error.message;
+            this.saving = false;
+        }
+    },
+});
 
 Alpine.data('reportForm', () => ({
     period: 'harian',
@@ -1497,9 +2277,14 @@ window.statusColor = statusColor;
 window.relativeTime = relativeTime;
 window.iconSvg = iconSvg;
 
-// `/` jumps to the station search unless the reader is already typing. The
-// field only exists on the digital twin, so elsewhere this finds nothing and
-// the key keeps its normal meaning.
+/*
+| `/` jumps to the station search unless the reader is already typing. The
+| field only exists on the digital twin, and only while the base panorama is
+| on screen, so elsewhere this finds nothing and the key keeps its normal
+| meaning — a hidden field is checked for as well, because `x-show` leaves it
+| in the document and focusing something nobody can see would swallow the key
+| for nothing.
+*/
 window.addEventListener('keydown', (event) => {
     if (event.key !== '/' || event.metaKey || event.ctrlKey) {
         return;
@@ -1513,7 +2298,7 @@ window.addEventListener('keydown', (event) => {
 
     const field = document.querySelector('[x-data="stationSearch()"] input');
 
-    if (field) {
+    if (field?.offsetParent) {
         event.preventDefault();
         field.focus();
     }
