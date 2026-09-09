@@ -70,6 +70,15 @@ Alpine.store('site', {
     /** `auto` follows the instruments; any other code forces a what-if. */
     skyScenario: 'auto',
 
+    /**
+     * Width of one cloud tile, in pixels.
+     *
+     * The deck repeats every tile, so this is both the distance the drift
+     * travels and the wrap the stage's camera parallax is taken modulo — which
+     * is why it is a number here rather than a length in the stylesheet.
+     */
+    cloudTile: 1180,
+
     /** Ability codes from config/access.php, as granted to the signed-in role. */
     can(ability) {
         return this.abilities.includes(ability);
@@ -486,6 +495,63 @@ Alpine.store('site', {
     },
 
     /**
+     * The two decks of cloud, sized by how much of the sky is covered.
+     *
+     * `berawan` and `mendung` are not one picture at two opacities either: a
+     * few fair-weather lumps have bright tops and gaps between them, while an
+     * overcast sky is grey rather than white, hangs lower down the frame, and
+     * has lost most of the contrast between one lump and the next. Rain adds
+     * to the underside only — a raining sky is darker underneath, not whiter
+     * on top.
+     */
+    get cloudDecks() {
+        const cloud = Math.min(1, Math.max(0, this.sky.cloud ?? 0));
+        const rain = Math.min(1, Math.max(0, this.sky.rain ?? 0));
+
+        /*
+        | How much of the sky the near deck hides.
+        |
+        | This is the whole difference between `berawan` and `mendung`: a few
+        | fair-weather lumps hide almost none of the sky, and an overcast one
+        | takes the blue and the sun with it. Brighter white lumps over the
+        | same blue only ever read as haze on a sunny day, which is what the
+        | deck did before it had a lid.
+        |
+        | The curve is deliberately not a straight line. Cloud has to pass a
+        | third of the sky before any of it reads as a lid — under that it is
+        | gaps, which is what `berawan` is — and it closes over the last of the
+        | blue well before the figure reaches 1, because a sky that is nine
+        | tenths covered already looks shut.
+        */
+        const shut = Math.min(1, Math.max(0, (cloud - 0.3) / 0.56));
+        const cover = shut * shut * (3 - 2 * shut) * 0.86;
+
+        const deck = (low) => {
+            const opacity = low ? 0.3 + 0.66 * cloud : 0.2 + 0.46 * cloud;
+
+            return {
+                opacity,
+                // White is the sunlit top, and overcast has none of it.
+                '--cloud-a': (low ? 0.62 - 0.28 * cloud : 0.5 - 0.24 * cloud).toFixed(3),
+                '--cloud-shade': (0.05 + (low ? 0.32 : 0.18) * cloud + 0.12 * rain).toFixed(3),
+                // The lid is painted inside the deck, so it is scaled back out
+                // of the element's own opacity — which is what carries the
+                // 900ms fade when the reader changes the scenario.
+                '--cloud-lid': low ? Math.min(1, cover / opacity).toFixed(3) : '0',
+                // Where the deck stops, as a percentage of its own band. The
+                // mask is still fading at 55% of that band, so nothing may
+                // reach in front of it.
+                '--cloud-reach': `${Math.max(58, Math.round((low ? 59 : 52) + 16 * cloud))}%`,
+                // One tile per pass, so a heavier sky moves faster rather than
+                // simply being repainted more often.
+                '--cloud-speed': `${Math.round((low ? 190 : 265) - 70 * cloud - 45 * rain)}s`,
+            };
+        };
+
+        return { low: deck(true), high: deck(false) };
+    },
+
+    /**
      * The two sheets of rain, sized by how hard it is raining.
      *
      * Drizzle and a downpour are not the same picture at two opacities:
@@ -612,6 +678,10 @@ Alpine.store('viewer', {
     */
     gatesOpen: false,
 
+    /** The section of piezometers the reader has open, by hotspot id. */
+    sectionId: null,
+    sectionOpen: false,
+
     async open360(code) {
         this.open = true;
         this.loading = true;
@@ -687,6 +757,242 @@ Alpine.store('viewer', {
         return value === null || value === undefined
             ? null
             : Math.round((value / this.gateStroke(hotspot)) * 100);
+    },
+
+
+    /**
+     * The section the reader has open.
+     *
+     * Resolved from the environment payload on every read rather than copied
+     * into the store when it was opened: the phreatic line and every reading
+     * in the drawing are live, and a snapshot would quietly stop moving while
+     * the dialog claimed to be showing the dam.
+     */
+    get section() {
+        // A section can stand on the base panorama or inside the station whose
+        // instruments it draws, so it is looked for in both: the stage payload
+        // carries the first, a station's own hotspots the second.
+        const base = Alpine.store('site').environment?.stage?.base?.sections ?? [];
+        const here = (this.station?.hotspots ?? [])
+            .filter((hotspot) => hotspot.section)
+            .map((hotspot) => hotspot.section);
+
+        return [...here, ...base].find((item) => item.id === this.sectionId) ?? null;
+    },
+
+    openSection(id) {
+        this.sectionId = id;
+        this.sectionOpen = true;
+    },
+
+    closeSection() {
+        this.sectionOpen = false;
+    },
+
+    /**
+     * The section, drawn.
+     *
+     * A cut through the dam on the axis: the body and its core, the reservoir
+     * against the upstream face, the phreatic surface the readings describe,
+     * and every instrument at its own elevation and its own distance from the
+     * axis. Built as a string and injected with `x-html` because `x-for` does
+     * not work inside `<svg>`.
+     *
+     * Nothing here is exaggerated vertically. A section drawn 1:1 is the one
+     * an engineer can read a slope off; stretching the height would make the
+     * picture prettier and the drawing a lie.
+     */
+    get sectionSvg() {
+        const section = this.section;
+
+        if (!section) {
+            return '';
+        }
+
+        const g = section.geometry ?? {};
+        const crest = Number(g.crest ?? 100);
+        const foundation = Number(g.foundation ?? crest - 35);
+        const half = Number(g.crest_width ?? 10) / 2;
+        const up = Number(g.slope_up ?? 2.75);
+        const down = Number(g.slope_down ?? 2.25);
+        const height = Math.max(1, crest - foundation);
+        const toeUp = -(half + up * height);
+        const toeDown = half + down * height;
+
+        // The ground the dam stands on runs past both toes.
+        const x0 = toeUp - 16;
+        const x1 = toeDown + 16;
+        const y0 = foundation - 8;
+        const y1 = crest + 9;
+
+        /*
+        | Pixels per metre, the same on both axes. Big enough that a code and a
+        | reading fit under an instrument without touching its neighbour — the
+        | drawing came out legible but cramped at 4.2, and it costs nothing to
+        | grow it because the dialog scrolls it sideways rather than squashing
+        | it. What it may never do is stretch one axis: a section is the
+        | drawing somebody reads a slope off.
+        */
+        const scale = 6.2;
+        const pad = { left: 54, right: 118, top: 30, bottom: 34 };
+        const X = (m) => pad.left + (m - x0) * scale;
+        const Y = (el) => pad.top + (y1 - el) * scale;
+        const width = pad.left + (x1 - x0) * scale + pad.right;
+        const tall = pad.top + (y1 - y0) * scale + pad.bottom;
+
+        // The top of the body over any offset: the crest, or the slope.
+        const crown = (o) => (Math.abs(o) <= half
+            ? crest
+            : crest - (Math.abs(o) - half) / (o < 0 ? up : down));
+
+        const at = (o, el) => `${X(o).toFixed(1)},${Y(el).toFixed(1)}`;
+        const metres = (value, digits = 2) => value.toLocaleString('id-ID', {
+            minimumFractionDigits: digits,
+            maximumFractionDigits: digits,
+        });
+
+        const body = [
+            at(toeUp, foundation), at(-half, crest),
+            at(half, crest), at(toeDown, foundation),
+        ].join(' ');
+
+        const coreTop = Number(g.core_top ?? crest - 1.5);
+        const coreHalfTop = Number(g.core_top_width ?? 5) / 2;
+        const coreHalfBase = Number(g.core_base_width ?? 20) / 2;
+        const core = [
+            at(-coreHalfBase, foundation), at(-coreHalfTop, coreTop),
+            at(coreHalfTop, coreTop), at(coreHalfBase, foundation),
+        ].join(' ');
+
+        // The reservoir, held against the upstream face.
+        const water = Number(g.water ?? 0);
+        const faceUp = (el) => -half - up * (crest - el);
+        const reservoir = water > foundation ? [
+            at(x0, water), at(faceUp(water), water),
+            at(toeUp, foundation), at(x0, foundation),
+        ].join(' ') : null;
+
+        /*
+        | The surface itself: the level at the axis, falling downstream. It is
+        | sampled rather than drawn as one straight line so it can be clipped
+        | to the body — a phreatic line drawn out into the air past the
+        | downstream slope is a line describing water that is not there.
+        */
+        const line = (top) => {
+            const points = [];
+
+            for (let o = toeUp; o <= toeDown; o += 2) {
+                const el = top - section.gradient * o;
+
+                if (el <= crown(o) && el >= foundation) {
+                    points.push(at(o, el));
+                }
+            }
+
+            return points.join(' ');
+        };
+
+        const phreatic = section.level === null ? null : line(section.level);
+        const design = section.design_phreatic ? line(section.design_phreatic) : null;
+
+        /*
+        | One guide per row, and rows nearer than a couple of metres are one
+        | row: the foundation instruments sit within a metre of each other, so
+        | labelling each of them printed four elevations on top of one another
+        | at the downstream end.
+        */
+        const rows = [...new Set(section.points.map((p) => p.elevation))]
+            .sort((a, b) => a - b)
+            .filter((el, index, all) => index === 0 || el - all[index - 1] >= 2);
+
+        const guides = rows.map((el) => `
+            <line class="psv-cut__row" x1="${X(x0 + 4).toFixed(1)}" y1="${Y(el).toFixed(1)}"
+                  x2="${(width - pad.right + 46).toFixed(1)}" y2="${Y(el).toFixed(1)}"/>
+            <text class="psv-cut__el" x="${(width - pad.right + 52).toFixed(1)}"
+                  y="${(Y(el) + 4).toFixed(1)}">+${metres(el)}</text>
+        `).join('');
+
+        /*
+        | The lines a reader needs to place everything else against: where the
+        | crest is, and where the water stands. Without them the picture is a
+        | grey wedge with dots in it.
+        */
+        const marks = [
+            `<line class="psv-cut__mark" x1="${X(x0).toFixed(1)}" y1="${Y(crest).toFixed(1)}"
+                   x2="${X(-half).toFixed(1)}" y2="${Y(crest).toFixed(1)}"/>`,
+            `<text class="psv-cut__note" x="${X(x0 + 3).toFixed(1)}"
+                   y="${(Y(crest) - 7).toFixed(1)}">Puncak +${metres(crest)}</text>`,
+            water > foundation
+                ? `<text class="psv-cut__note psv-cut__note--water" x="${X(x0 + 3).toFixed(1)}"
+                         y="${(Y(water) - 7).toFixed(1)}">Muka air +${metres(water)}</text>`
+                : '',
+            `<text class="psv-cut__zone" x="${X(0).toFixed(1)}"
+                   y="${Y(foundation + height * 0.36).toFixed(1)}">INTI</text>`,
+            `<text class="psv-cut__zone" x="${X(toeUp / 2).toFixed(1)}"
+                   y="${Y(foundation + height * 0.2).toFixed(1)}">HULU</text>`,
+            `<text class="psv-cut__zone" x="${X(toeDown / 2).toFixed(1)}"
+                   y="${Y(foundation + height * 0.2).toFixed(1)}">HILIR</text>`,
+        ].join('');
+
+        /*
+        | The name over the figure, and the pair stands **beside** the
+        | instrument, on the side away from the axis.
+        |
+        | Above and below was tried first and cannot work here: a two-line label
+        | is nearly thirty pixels tall while the rows are eight metres apart —
+        | barely fifty — so whichever way each point was pushed, the reading of
+        | one row came down on the name of the next. Beside the point the label
+        | needs no vertical room at all beyond its own height, centred on the
+        | instrument; and pointing it away from the axis is what keeps the two
+        | instruments *within* a row apart, because they sit either side of the
+        | core and their labels then grow in opposite directions instead of
+        | into the gap between them.
+        */
+        const instruments = section.points.map((point) => {
+            const cx = X(point.offset);
+            const cy = Y(point.elevation);
+            const color = point.status ? statusColor(point.status) : '#94a3b8';
+            const upstream = point.offset < 0;
+            const edge = cx + (upstream ? -11 : 11);
+            const shape = point.kind === 'pondasi'
+                ? `<rect x="${(cx - 5.5).toFixed(1)}" y="${(cy - 5.5).toFixed(1)}" width="11" height="11" rx="1.8"/>`
+                : `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="6.2"/>`;
+            const reading = point.dry
+                ? 'kering'
+                : `${point.head.toLocaleString('id-ID', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} m`;
+
+            return `
+                <g class="psv-cut__point ${point.dry ? 'is-dry' : ''}" style="color:${color}">
+                    ${shape}
+                    <text class="psv-cut__label" text-anchor="${upstream ? 'end' : 'start'}"><tspan
+                        class="psv-cut__code" x="${edge.toFixed(1)}"
+                        y="${(cy - 2).toFixed(1)}">${point.code}</tspan><tspan
+                        class="psv-cut__read" x="${edge.toFixed(1)}"
+                        y="${(cy + 13).toFixed(1)}">${reading}</tspan></text>
+                </g>
+            `;
+        }).join('');
+
+        return `
+            <svg viewBox="0 0 ${width.toFixed(0)} ${tall.toFixed(0)}"
+                 width="${width.toFixed(0)}" height="${tall.toFixed(0)}" class="psv-cut"
+                 role="img" aria-label="Potongan melintang as bendungan dengan titik piezometer">
+                <rect class="psv-cut__ground" x="0" y="${Y(foundation).toFixed(1)}"
+                      width="${width.toFixed(0)}" height="${(tall - Y(foundation)).toFixed(1)}"/>
+                ${reservoir ? `<polygon class="psv-cut__water" points="${reservoir}"/>` : ''}
+                <polygon class="psv-cut__body" points="${body}"/>
+                <polygon class="psv-cut__core" points="${core}"/>
+                ${marks}
+                <line class="psv-cut__axis" x1="${X(0).toFixed(1)}" y1="${Y(crest + 6).toFixed(1)}"
+                      x2="${X(0).toFixed(1)}" y2="${Y(foundation - 5).toFixed(1)}"/>
+                <text class="psv-cut__axis-label" x="${X(0).toFixed(1)}"
+                      y="${Y(crest + 6.6).toFixed(1)}">AS</text>
+                ${guides}
+                ${design ? `<polyline class="psv-cut__design" points="${design}"/>` : ''}
+                ${phreatic ? `<polyline class="psv-cut__phreatic" points="${phreatic}"/>` : ''}
+                ${instruments}
+            </svg>
+        `;
     },
 
     /** Open the gate control, on one leaf if the reader picked one. */
@@ -1012,45 +1318,10 @@ Alpine.data('analyticsBoard', (stations) => ({
         }
 
         window.addEventListener('resize', () => resizeCharts(this.$root));
+        window.addEventListener('popstate', () => this.adopt());
     },
 
     /* --------------------------------------------------------- what exists */
-
-    /**
-     * Every parameter the current scope offers.
-     *
-     * One station: all of its parameters. Every station: the headline
-     * parameter of each, which is what makes them comparable at a glance.
-     */
-    get choices() {
-        if (this.scope === 'semua') {
-            return this.stations
-                .filter((station) => station.metrics.length)
-                .map((station) => ({
-                    id: station.code,
-                    code: station.code,
-                    station: station.name,
-                    metric: station.metrics[0],
-                }));
-        }
-
-        const station = this.stations.find((item) => item.code === this.scope);
-
-        return (station?.metrics ?? []).map((metric) => ({
-            id: `${station.code}:${metric.key}`,
-            code: station.code,
-            station: station.name,
-            metric,
-        }));
-    },
-
-    get cards() {
-        return this.choices;
-    },
-
-    cardById(id) {
-        return this.choices.find((choice) => choice.id === id) ?? null;
-    },
 
     /**
      * Every parameter the current scope offers.
@@ -1234,11 +1505,63 @@ Alpine.data('analyticsBoard', (stations) => ({
 
     /* -------------------------------------------------------------- analisa */
 
-    /** A card in the grid is a shortcut: that parameter alone, in analisa. */
+    /**
+     * A card is a shortcut, and a click is always one level down.
+     *
+     * On the overview a card *is* a station, so it opens that station's own
+     * parameters; inside a station a card is one parameter, and that is what
+     * analisa draws. Landing on the combined chart straight from the overview
+     * skipped the station itself, which is the level a reader who picked a
+     * dot on the grid was actually asking for.
+     */
     open(card) {
+        if (this.scope === 'semua') {
+            this.setScope(card.code, { push: true });
+
+            return;
+        }
+
         this.picked = [{ code: card.code, key: card.metric.key }];
-        this.setMode('analisa');
+        this.setMode('analisa', { push: true });
         this.loadAnalysis();
+    },
+
+    /**
+     * The overview's own combined chart: every station's headline parameter
+     * on one pair of axes.
+     *
+     * It is one text button rather than a view toggle, because at this level
+     * there is nothing else to toggle to — but comparing three AWLR water
+     * levels in one picture is the reason this screen has a second view at
+     * all, and dropping the control would have dropped the feature.
+     */
+    combineHeadlines() {
+        this.setMode('analisa', { push: true });
+        this.loadAnalysis();
+    },
+
+    /**
+     * Back out of one station to every station's headline parameter.
+     *
+     * Every level change is pushed, up as well as down, so the history is a
+     * record of the moves the reader made and Back undoes the last one —
+     * including a back link. Replacing on the way up was the other option and
+     * it costs a dead Back press: the entry the link overwrote was the level
+     * it just returned to.
+     */
+    backToStations() {
+        this.mode = 'grafik';
+        this.setScope('semua', { push: true });
+    },
+
+    /** Whether the screen is the plain way in: every station, nothing picked. */
+    get overview() {
+        return this.scope === 'semua' && this.mode === 'grafik';
+    },
+
+    /** The station on screen, when the screen is about one. */
+    get station() {
+        return this.stations.find((item) => item.code === this.scope) ?? null;
     },
 
     async loadAnalysis() {
@@ -1309,20 +1632,83 @@ Alpine.data('analyticsBoard', (stations) => ({
      * `replaceState`, because changing the station is not a page the back
      * button should have to walk through.
      */
-    syncUrl() {
+    syncUrl({ push = false } = {}) {
         const url = new URL(window.location.href);
 
         url.searchParams.set('stasiun', this.scope);
         url.searchParams.set('rentang', this.range);
         url.searchParams.set('tampilan', this.mode);
-        url.searchParams.delete('parameter');
 
-        window.history.replaceState({}, '', url);
+        /*
+        | A pushed entry has to be returnable to, so the one parameter behind
+        | a card click is written down. More than one is the reader's own
+        | arrangement of chips, which no single name describes.
+        */
+        if (this.mode === 'analisa' && this.picked.length === 1) {
+            url.searchParams.set('parameter', this.picked[0].key);
+        } else {
+            url.searchParams.delete('parameter');
+        }
+
+        /*
+        | Moving between levels is real navigation — the overview, one
+        | station, one chart — so it is pushed and the browser's Back button
+        | answers the way the back link on screen does. Changing the range or
+        | swapping a chip is not a page to walk through.
+        */
+        window.history[push ? 'pushState' : 'replaceState']({}, '', url);
     },
 
-    setMode(mode) {
+    /**
+     * Follow the browser's own history.
+     *
+     * Level changes are pushed, so without this Back rewrote the address and
+     * left the screen on the station it already had — a page claiming to be
+     * somewhere it is not.
+     */
+    adopt() {
+        const asked = analyticsQuery();
+        const known = asked.scope === 'semua'
+            || this.stations.some((station) => station.code === asked.scope);
+
+        const scope = known ? asked.scope : 'semua';
+        const range = asked.range ?? this.range;
+
+        // Only the station and the range decide what was fetched; walking
+        // between the grid and the combined chart does not.
+        const stale = scope !== this.scope || range !== this.range;
+
+        this.scope = scope;
+        this.range = range;
+        this.mode = asked.mode ?? (asked.metric ? 'analisa' : 'grafik');
+
+        const named = asked.metric
+            ? this.choices.find((choice) => choice.metric.key === asked.metric)
+            : null;
+
+        this.picked = (named ? [named] : this.choices.slice(0, 1))
+            .map((choice) => ({ code: choice.code, key: choice.metric.key }));
+
+        if (stale) {
+            this.refresh();
+
+            return;
+        }
+
+        this.$nextTick(() => {
+            if (this.mode === 'grafik') {
+                this.drawInView();
+            } else {
+                this.loadAnalysis();
+            }
+
+            resizeCharts(this.$root);
+        });
+    },
+
+    setMode(mode, { push = false } = {}) {
         this.mode = mode;
-        this.syncUrl();
+        this.syncUrl({ push });
 
         /*
         | A chart built while its container was `display: none` measured zero
@@ -1340,8 +1726,9 @@ Alpine.data('analyticsBoard', (stations) => ({
         });
     },
 
+    /** Back out of the combined chart to the grid it was opened from. */
     backToGrid() {
-        this.setMode('grafik');
+        this.setMode('grafik', { push: true });
     },
 
     /** Everything already fetched is stale once the range or station changes. */
@@ -1363,9 +1750,9 @@ Alpine.data('analyticsBoard', (stations) => ({
         this.drawInView();
     },
 
-    setScope(code) {
+    setScope(code, { push = false } = {}) {
         this.scope = code;
-        this.syncUrl();
+        this.syncUrl({ push });
 
         // The parameters on offer changed with the scope; keep the ones that
         // are still on offer, and fall back to the first if none are.

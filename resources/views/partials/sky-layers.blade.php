@@ -4,6 +4,17 @@
 <div class="sky-veil" aria-hidden="true"
      :style="{ opacity: ($store.site.sky.cloud ?? 0) * 0.72 }"></div>
 
+{{-- The cloud itself, over the grey the veil put in. Two decks at different
+     heights and speeds; how bright, how low and how fast all come from the
+     same cloud figure, so `berawan` reads as gaps and `mendung` as a lid. --}}
+<template x-if="($store.site.sky.cloud ?? 0) > 0.06">
+    <div class="sky-clouds" aria-hidden="true"
+         :style="{ '--cloud-tile': $store.site.cloudTile + 'px' }">
+        <div class="sky-clouds__deck sky-clouds__deck--high" :style="$store.site.cloudDecks.high"></div>
+        <div class="sky-clouds__deck" :style="$store.site.cloudDecks.low"></div>
+    </div>
+</template>
+
 {{-- Aerial perspective: weather takes the distance before it takes the
      foreground, so the grey collects around the horizon instead of lying
      evenly over the frame. Rain does far more of it than cloud alone. --}}

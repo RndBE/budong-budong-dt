@@ -1,7 +1,7 @@
 import { postJson } from '../lib/api.js';
 import { statusColor } from '../lib/format.js';
 import { iconSvg } from '../lib/icons.js';
-import { gateHtml, hotspotHtml, loadPsv, plotHtml, stakeHtml, VECTOR_SCALE } from './panorama.js';
+import { gateHtml, hotspotHtml, loadPsv, plotHtml, sectionHtml, sectionName, stakeHtml, VECTOR_SCALE } from './panorama.js';
 
 const DEG = Math.PI / 180;
 
@@ -11,6 +11,22 @@ const CAPTION_EVERY = 4200;
 /** How long the turns take to sweep across all the pins. */
 const CAPTION_SPREAD = 900;
 const PHASES = ['night', 'dawn', 'day', 'dusk'];
+/**
+ * How far the cloud deck slides for one degree of camera bearing, in pixels.
+ *
+ * Cloud is far enough behind the dam to travel with the camera rather than
+ * with the sphere, but the deck is paint over the picture and not a second
+ * sphere — there is no camera model to derive this from, so it is tuned at the
+ * framing the stage opens on and left alone.
+ */
+const CLOUD_PARALLAX = 7.5;
+
+/** How far up or down the deck may be carried before its band runs out. */
+const CLOUD_LIFT = 330;
+
+/** Cover at which the stage swaps to the overcast render of the dam. */
+const OVERCAST = 0.55;
+
 
 /**
  * The digital twin stage: one Photo Sphere Viewer showing the dam's base
@@ -63,6 +79,9 @@ export default function twinSphere() {
         /** Where the camera looks, in degrees — drives the glass compass. */
         heading: 0,
 
+        /** How far above or below the horizon it looks, in degrees. */
+        tilt: 0,
+
         /** Where north sits in the panorama on screen, in degrees. */
         northOffset: 0,
 
@@ -107,6 +126,27 @@ export default function twinSphere() {
 
         /** Which parameter the station pins are naming this turn. */
         captionStep: 0,
+
+        /**
+         * Where the cloud deck sits for the bearing the camera is on.
+         *
+         * The deck repeats every `cloudTile` pixels, so the shift is wrapped
+         * into one tile: the sky keeps travelling for as long as the reader
+         * keeps turning, and the join never arrives.
+         */
+        get cloudShift() {
+            const tile = this.$store.site.cloudTile;
+            const across = -this.heading * CLOUD_PARALLAX;
+            const down = this.tilt * CLOUD_PARALLAX;
+
+            return {
+                '--sky-x': `${(((across % tile) + tile) % tile).toFixed(1)}px`,
+                // Looking up brings the horizon down the screen and the sky
+                // with it. There is no wrap for this one, so it is held inside
+                // the overhang the band was given.
+                '--sky-y': `${Math.max(-CLOUD_LIFT, Math.min(CLOUD_LIFT, down)).toFixed(1)}px`,
+            };
+        },
 
         /**
          * How much night to paint over the sphere. The panorama was shot in
@@ -177,7 +217,7 @@ export default function twinSphere() {
                     this.syncPins();
                 }
             });
-            this.$watch('sunPhase', () => this.applyPhase());
+            this.$watch('stagePhase', () => this.applyPhase());
             this.$watch('$store.viewer.station', (station) => {
                 if (station?.panorama?.url) {
                     this.show(station);
@@ -186,6 +226,8 @@ export default function twinSphere() {
             this.$watch('$store.viewer.open', (open) => {
                 if (!open) {
                     this.show(this.base);
+                    // The sky may have turned while the station was open.
+                    this.applyPhase();
                 }
             });
 
@@ -395,23 +437,101 @@ export default function twinSphere() {
             );
         },
 
+        /** Whether a texture name is a weather render rather than an hour. */
+        weatherPhase(name) {
+            return Boolean(name) && !PHASES.includes(name);
+        },
+
+        /**
+         * The texture the stage actually wears: the hour, unless the sky is
+         * covered enough that there is a render of it.
+         *
+         * The sky state's own code comes first, so building `rintik` or
+         * `hujan` one day is a file and a line of config and nothing here.
+         * Failing that, a covered sky falls back to the overcast render — a
+         * downpour under an overcast sphere with the rain drawn over it is
+         * far nearer the truth than a downpour under a sunny one.
+         *
+         * Weather renders exist for daylight only, and that is the whole of
+         * the rule — dawn, dusk and night keep their own spheres, because
+         * cloud at those hours is a change of colour the paint can still
+         * carry. `phases` is missing a name entirely when the file was never
+         * built, so a site without the render simply never reaches this.
+         */
+        get stagePhase() {
+            const sun = this.sunPhase;
+            const sky = this.$store.site.sky ?? {};
+            const phases = this.base?.phases ?? {};
+
+            if (sun !== 'day') {
+                return sun;
+            }
+
+            if (this.weatherPhase(sky.code) && phases[sky.code]) {
+                return sky.code;
+            }
+
+            return (sky.cloud ?? 0) >= OVERCAST && phases.mendung ? 'mendung' : sun;
+        },
+
+        /**
+         * Whether the weather belongs to the picture rather than to the paint.
+         *
+         * This asks where the stage is *going*, not what it is wearing: the
+         * swap is debounced and then cross-fades, and for those two seconds
+         * the painted lid used to rise over a sphere that was still sunny and
+         * sink again once the render landed. Grey haze blooming over a blue
+         * sky and then clearing is not weather arriving — it reads as smoke.
+         * Nothing is painted from the moment the answer is a render; the
+         * picture changing is the whole of the transition.
+         */
+        get bakedSky() {
+            return !this.stationView && this.weatherPhase(this.stagePhase);
+        },
+
         /** Texture set for one phase, falling back to daylight. */
         phaseAsset(phase) {
             return this.base?.phases?.[phase] ?? this.base?.panorama ?? null;
         },
 
         /**
-         * Swap the base sphere for the texture of the current phase. Scrubbing
-         * the clock crosses several phases quickly, so the swap is debounced
-         * and skipped whenever a station panorama is on screen.
+         * Swap the base sphere for the texture of the current phase, skipped
+         * whenever a station panorama is on screen.
+         *
+         * Scrubbing the clock crosses several phases in a second, so an hour
+         * is debounced. A change of weather is a button press and waits for
+         * nothing: four hundred milliseconds of a sky that has not moved is
+         * four hundred milliseconds of the reader deciding the control missed
+         * the click — and the rain starts falling in the same frame they
+         * pressed, so there is nothing left to hide the pause behind.
          */
-        applyPhase() {
+        applyPhase(after = null) {
             window.clearTimeout(psv.phaseTimer);
 
-            psv.phaseTimer = window.setTimeout(() => {
-                const phase = this.sunPhase;
+            const swap = this.weatherPhase(this.stagePhase) || this.weatherPhase(this.phase);
 
-                if (!psv.viewer || !this.ready || this.stationView || this.flying) {
+            psv.phaseTimer = window.setTimeout(() => {
+                const phase = this.stagePhase;
+
+                if (!psv.viewer || !this.ready || this.flying) {
+                    /*
+                    | The weather can turn while the stage is still opening or
+                    | while an arrival is in the air. Dropping the change there
+                    | left the sphere on the wrong sky for the rest of the
+                    | session — the reader picked `mendung` a second too early
+                    | and the dam stayed sunny — so it waits for its turn
+                    | instead of being thrown away. The retry names its own
+                    | wait: a weather swap is scheduled for the next tick, and
+                    | re-arming that for the length of an arrival is a spin.
+                    */
+                    this.applyPhase(400);
+
+                    return;
+                }
+
+                // Inside a station there is no base sphere to swap; coming back
+                // out calls this again.
+                if (this.stationView) {
                     return;
                 }
 
@@ -425,10 +545,29 @@ export default function twinSphere() {
                     return;
                 }
 
+                // A change of weather is somebody pressing a button, not the
+                // hour turning: the slow fade below is for a valley whose
+                // light should change the way it does outside, and waiting
+                // nearly three seconds for an answer to a click reads as the
+                // control having missed it.
+                const asked = this.weatherPhase(phase) || this.weatherPhase(this.phase);
+                const preview = asset.preview ?? asset.url;
+
+                /*
+                | The sharp one downloads while the fade runs, through the
+                | loader so `setPanorama` reuses it rather than fetching the
+                | file twice. Without this the HD only starts once the fade is
+                | over, and the sphere holds the preview for as long as six
+                | hundred kilobytes take.
+                */
+                if (asset.url !== preview) {
+                    psv.viewer.textureLoader.preloadPanorama(asset.url).catch(() => {});
+                }
+
                 this.phase = phase;
 
                 psv.viewer
-                    .setPanorama(asset.preview ?? asset.url, {
+                    .setPanorama(preview, {
                         showLoader: false,
                         // Slow on the real clock — the light of the valley
                         // should change the way it does outside. Scrubbing runs
@@ -436,12 +575,33 @@ export default function twinSphere() {
                         transition: {
                             effect: 'fade',
                             rotation: false,
-                            speed: this.$store.site.time.mode === 'custom' ? 900 : 2600,
+                            speed: asked || this.$store.site.time.mode === 'custom' ? 900 : 2600,
                         },
                     })
                     .then(() => psv.viewer.setPanorama(asset.url, { showLoader: false, transition: false }))
                     .catch(() => {});
-            }, 400);
+            }, after ?? (swap ? 0 : 400));
+        },
+
+        /**
+         * Pull the weather renders into the viewer's cache while the stage is
+         * idle.
+         *
+         * `setPanorama` does not begin its cross-fade until the texture has
+         * landed, so an unwarmed render is a button that does nothing for as
+         * long as the file takes — and the whole of that wait falls between
+         * the reader's click and the first frame of the sky moving. Previews
+         * only: they are a sixth of the bytes and the sharpening pass is
+         * warmed by the swap itself.
+         */
+        warmWeather() {
+            Object.entries(this.base?.phases ?? {})
+                .filter(([name]) => this.weatherPhase(name))
+                .forEach(([, asset]) => {
+                    psv.viewer?.textureLoader
+                        .preloadPanorama(asset.preview ?? asset.url)
+                        .catch(() => {});
+                });
         },
 
         /**
@@ -485,7 +645,10 @@ export default function twinSphere() {
             const isBase = !entry;
 
             psv.showing = target;
-            this.phase = this.sunPhase;
+            // The weather the stage opens on, not just the hour: a page loaded
+            // under a covered sky used to build the sunny sphere and stay on
+            // it, because the watcher only ever hears about a *change*.
+            this.phase = this.stagePhase;
             this.setNorthOffset(target.panorama.north_offset ?? 0);
 
             // The base sphere has one texture per time of day; a station has
@@ -549,7 +712,12 @@ export default function twinSphere() {
 
                 this.dialAngle += (opening.yaw / DEG) - this.heading;
                 this.heading = opening.yaw / DEG;
+                this.tilt = opening.pitch / DEG;
                 this.zoom = psv.viewer.getZoomLevel() / 100;
+
+                // The weather the reader has not asked for yet, in the cache
+                // before they ask.
+                this.warmWeather();
 
                 // A panorama asked for while the viewer was still being built
                 // (deep link, or a very quick click) gets its turn now.
@@ -580,6 +748,7 @@ export default function twinSphere() {
                 // Shortest way round, then add it to the running total.
                 this.dialAngle += (((heading - this.heading) % 360) + 540) % 360 - 180;
                 this.heading = heading;
+                this.tilt = position.pitch / DEG;
             });
 
             psv.viewer.addEventListener('size-updated', () => this.tuneMoveSpeed());
@@ -617,12 +786,19 @@ export default function twinSphere() {
                 return;
             }
 
-            // The base sphere has one texture per time of day.
+            /*
+            | The base sphere has one texture per time of day, and one more per
+            | weather it has a render of. It has to be asked for by
+            | `stagePhase`: on `sunPhase` the way back out of a station landed
+            | on the plain daylight dam under a covered sky, and the catch-up
+            | swap a moment later made the return two cross-fades with the
+            | wrong weather in between.
+            */
             const isBase = target.code === this.base?.code;
-            const asset = isBase ? this.phaseAsset(this.sunPhase) : target.panorama;
+            const asset = isBase ? this.phaseAsset(this.stagePhase) : target.panorama;
 
             if (isBase) {
-                this.phase = this.sunPhase;
+                this.phase = this.stagePhase;
             }
 
             const preview = asset.preview ?? asset.url;
@@ -754,7 +930,7 @@ export default function twinSphere() {
             // The base sphere is whichever phase is on screen, not the plain
             // daylight photograph the station record points at.
             const panorama = target?.code === this.base?.code
-                ? this.phaseAsset(this.phase ?? this.sunPhase)
+                ? this.phaseAsset(this.phase ?? this.stagePhase)
                 : target?.panorama;
             const url = panorama?.url;
 
@@ -813,7 +989,7 @@ export default function twinSphere() {
 
         /** Station types the "Ukuran Air" filter keeps. */
         get waterTypes() {
-            return ['water_level', 'water_quality', 'seepage', 'gate', 'piezometer', 'observation_well'];
+            return ['water_level', 'water_quality', 'sediment', 'seepage', 'gate', 'piezometer', 'observation_well'];
         },
 
         setPinFilter(mode) {
@@ -821,11 +997,32 @@ export default function twinSphere() {
             this.syncPins();
         },
 
+        /**
+         * The sections that open a drawing rather than a place.
+         *
+         * They stand on the base panorama beside the station pins, because a
+         * buried instrument has nowhere of its own to be pointed at: what the
+         * reader can actually look at is the cut through the dam it sits in.
+         * The pin filter leaves them alone — a section is not a station and
+         * has no type to filter by.
+         */
+        sectionMarkers() {
+            return (this.base?.sections ?? []).map((section) => ({
+                id: `section-${section.id}`,
+                position: { yaw: section.yaw * DEG, pitch: section.pitch * DEG },
+                html: sectionHtml(section, statusColor(section.status ?? 'normal')),
+                anchor: 'center center',
+                zIndex: 45,
+                tooltip: { content: sectionName(section), position: 'top center' },
+                data: { section: section.id },
+            }));
+        },
+
         stationMarkers() {
             const baseCode = this.base?.code;
             const water = this.waterTypes;
 
-            return this.$store.site.markers
+            return this.sectionMarkers().concat(this.$store.site.markers
                 .filter((marker) => marker.code !== baseCode)
                 .filter((marker) => this.pinFilter !== 'air' || water.includes(marker.type))
                 .map((marker) => {
@@ -848,7 +1045,7 @@ export default function twinSphere() {
                         zIndex: marker.code === this.$store.viewer.code ? 60 : 40,
                         data: { code: marker.code },
                     };
-                });
+                }));
         },
 
         hotspotMarkers() {
@@ -867,6 +1064,25 @@ export default function twinSphere() {
 
                 if (hotspot.type === 'gate') {
                     return this.gateMarkers(hotspot, metrics);
+                }
+
+                // A section opens a drawing; it has no reading of its own to
+                // print and nowhere for the camera to go.
+                if (hotspot.type === 'piezo' && hotspot.section) {
+                    return [{
+                        id: `section-${hotspot.id}`,
+                        // The record's own angles, not the section's copy of
+                        // them: a drag writes them here first.
+                        position: { yaw: hotspot.yaw * DEG, pitch: hotspot.pitch * DEG },
+                        html: sectionHtml(hotspot.section, statusColor(hotspot.section.status ?? 'normal')),
+                        anchor: 'center center',
+                        zIndex: 45,
+                        // The plate carries only the glyph, so its name lives
+                        // here — and what is in it, which is the part worth
+                        // reading before deciding to open the drawing.
+                        tooltip: { content: sectionName(hotspot.section), position: 'top center' },
+                        data: hotspot,
+                    }];
                 }
 
                 const metric = hotspot.metric_key ? metrics.get(hotspot.metric_key) : null;
@@ -1053,6 +1269,13 @@ export default function twinSphere() {
                 return;
             }
 
+            // A section is a drawing, not a place: nothing flies anywhere.
+            if (String(id).startsWith('section-')) {
+                this.$store.viewer.openSection(Number(String(id).replace('section-', '')));
+
+                return;
+            }
+
             if (String(id).startsWith('station-')) {
                 if (this.editMarkers) {
                     return;
@@ -1170,8 +1393,21 @@ export default function twinSphere() {
         /** The marker currently under the pointer, by plugin id. */
         get dragId() {
             if (this.draggingHotspot) {
-                return this.draggingStake
-                    ? `stake-${this.draggingHotspot}-${this.draggingStake}`
+                if (this.draggingStake) {
+                    return `stake-${this.draggingHotspot}-${this.draggingStake}`;
+                }
+
+                /*
+                | A section's marker is `section-<id>`, not `hotspot-<id>`.
+                | Returning the wrong one left `updateMarker` addressing a
+                | marker that does not exist, so nothing followed the pointer
+                | and the plate only jumped to its new angles once the drop had
+                | written the record — a placement done blind.
+                */
+                const hotspot = this.hotspotFor(`hotspot-${this.draggingHotspot}`);
+
+                return hotspot?.type === 'piezo'
+                    ? `section-${this.draggingHotspot}`
                     : `hotspot-${this.draggingHotspot}`;
             }
 
@@ -1944,7 +2180,7 @@ function pinHtml(marker, color, target = false, highlight = false, step = 0) {
 
     return `
         <div class="sphere-pin${state}" data-station="${marker.code}">
-            <span class="sphere-pin__dot" style="--pin:${color}">${iconSvg(marker.type, 13)}</span>
+            <span class="sphere-pin__dot" style="--pin:${color}">${iconSvg(marker.type, 16)}</span>
             <span class="sphere-pin__label">
                 <span class="sphere-pin__name">${marker.short_name ?? marker.name}</span>
                 <span class="sphere-pin__value tnum" style="color:${tint}">${reading.value ?? ''}</span>

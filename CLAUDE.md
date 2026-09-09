@@ -217,6 +217,17 @@ records conventions that are easy to break.
   can find at the widest zoom; it is a sign, so it keeps a legible size while
   only the ground it stands on scales. The petak is `pointer-events: none`, so
   clicks belong to the stake in it.
+- Nothing drawn over the sphere may be invisible and still take the pointer.
+  `opacity: 0` hit-tests, and placement finds its handle with
+  `closest('[data-hotspot]')` on whatever the pointer landed on, so the mm
+  readout under a stake — some forty pixels wide against a 26px marker, and
+  hanging over the ground the next line down is drawn on — was silently
+  grabbing the prism above the one being aimed at. Measured on ADR-02: ten of
+  thirty prisms failed a hit test at their own centre, seven of them to that
+  plate; with `pointer-events: none` on it, three, and all three are stakes
+  standing under the app's own chrome. Anything that fades on the sphere needs
+  the same treatment — the readout, the arrow and the row caption are pictures
+  of numbers, and only the stake itself is a control.
 - The stake marker is a 16px symbol in a 26px box, and the extra ring is hit
   area: a 16px target on a photograph is a target people miss. It carries
   `role="button"` and its code plus its reading as `aria-label`, so the marker
@@ -343,9 +354,9 @@ records conventions that are easy to break.
 - Analytics is one screen with two views, `grafik` and `analisa`: a chart per
   parameter (all of a station's, or the headline parameter of every station
   when `scope = 'semua'`), and the parameters the reader ticks drawn into a
-  single chart. A card in the grid is a shortcut into `analisa` — never a
-  second menu entry, which would duplicate the station and range controls and
-  make the reader choose before they can look. Station, range and mode live in
+  single chart. A card in the grid is a shortcut — never a second menu entry,
+  which would duplicate the station and range controls and make the reader
+  choose before they can look. Station, range and mode live in
   the URL and nowhere else — `?stasiun`, `?rentang`, `?tampilan`,
   `?parameter` (an older `detail`/`kisi` still resolves), read on boot and
   written back by every control. They used to persist in `localStorage`, which
@@ -354,6 +365,32 @@ records conventions that are easy to break.
   entry could never be a neutral way in. A plain visit opens on `semua` — every
   station's headline parameter, the one view that answers a question nobody
   has asked yet.
+- The screen is read as three levels, and every level is a *derivation* of
+  `scope` and `mode` rather than a state of its own: the overview
+  (`semua` + `grafik`), one station, and the combined chart. A card click goes
+  down exactly one of them — on the overview a card *is* a station, so it opens
+  that station's parameters, and inside a station a card is one parameter, which
+  is what `analisa` draws. Landing on the combined chart straight from the
+  overview skipped the level the reader had just pointed at.
+- A control appears at the level it has something to answer. The overview
+  offers no station dropdown — it is every station, so there is nothing to
+  choose — and no view toggle, because there is only one reading of it; both
+  arrive once a station is open, where the dropdown's job is crossing to
+  another station rather than choosing a first one. Only the range is offered
+  everywhere: it has a sane default and it is what makes two cards comparable,
+  so it is not a question the reader has to answer before looking.
+- Comparing the headline parameter of several stations in one chart is the
+  reason the second view exists, and hiding the overview's toggle would have
+  taken it away, so `combineHeadlines()` keeps it on one text button
+  ("Gabungkan dalam satu grafik"). One button, not a control panel — and it is
+  gone while that chart is on screen, because it would then do nothing.
+- Every level change is pushed with `pushState`, up as well as down, so the
+  history is a record of the reader's own moves and Back undoes the last one;
+  changing the range or swapping a chip replaces. That makes `popstate` real
+  navigation the screen has to follow — `adopt()` re-reads the query and
+  refreshes, and without it Back rewrote the address and left the page on the
+  level it already had. A pushed entry carries `?parameter` when exactly one
+  is picked, which is what makes it returnable to.
 - The station list is only stations that *have* parameters. The overview
   panorama has none, and offering it left the reader on an empty screen with
   no way to tell the station from a broken page — and because the choice is
@@ -658,9 +695,35 @@ records conventions that are easy to break.
   window event the stage listens for; the `/` shortcut finds no field elsewhere
   and leaves the key alone — it checks `offsetParent`, not just existence,
   because `x-show` leaves a hidden field in the document.
+- The header is sized by its content, so anything only one page puts in that
+  row changes that page's header height — and the rail, the panel and the
+  compass all start on `--header-h`, which is a fixed clamp and does not
+  follow. The search made the dam's name give up its width and wrap onto two
+  lines, which alone made the twin's header some fifty pixels taller than
+  every other page: the whole top of that screen read as spaced further apart.
+  The name is therefore one line that truncates (`min-w-[6.5rem]` so it
+  shrinks to something rather than to nothing) and never `shrink-0` — held at
+  full width the row overflows and the account menu walks off the right edge.
+  With the search in it that row is still wider than the screen below about
+  1100px; that part is unsolved, and hiding the weather and clock chips
+  earlier is the obvious place to start.
+- A wrapper that only carries `x-show` around a partial that hides itself at a
+  breakpoint must be `display: contents`. The header's two search slots are
+  `<div class="contents" x-show="…">`: without it the wrapper stays a flex
+  item after the partial inside has gone, so the row puts a gap on either side
+  of nothing — which is why the bell and the help button sat twice as far
+  apart on the twin (20px) as on every other page (10px). The breakpoint
+  belongs to the partial; the wrapper only decides open or closed.
 - The search is hidden while a station panorama is open (`!$store.viewer.open`).
   Inside a station there are no pins to steer to, so the only thing the field
   could do is take the reader out of the picture they just opened.
+- The stage's sky-clock chip ("Siang · Cerah · 16:48") is hidden the same way
+  and for the same kind of reason: the hour and the sky belong to the stage,
+  not to one instrument, and inside a station that corner is where that
+  station's gate control stands. Its `x-show` only ever *removes* the inline
+  display, so `max-xl:hidden` still decides the rest — and the dropdown is
+  closed on the way in (`x-effect`), or it would be standing open on the way
+  back out.
 - A pin picked from search is `highlighted`: it wears its caption even with the
   `Label` pill off, and keeps it until the reader touches the sphere or opens a
   station. Turning the camera to a dot without naming it leaves the reader to
@@ -687,8 +750,10 @@ records conventions that are easy to break.
 - The colour is written as marker `svgStyle`, from `statusColor()`, so the one
   palette answers for it. `.psv-cell` therefore declares no `fill` or `stroke`
   at all: a CSS declaration beats a presentation attribute, and it would take
-  the status straight back off. The gate bays set theirs in CSS precisely
-  because they are *not* status-coloured.
+  the status straight back off. The gate bays set theirs in CSS because a bay
+  has no status to lose. The dashes, though, are shared — `.psv-cell` is
+  written after both gate rules and carries the same weight, so neither of
+  them can turn `stroke-dasharray` off from its own selector.
 - `plotGrid()` builds the whole station at once, because none of what a petak
   needs is a property of one line. Each edge is measured in its own direction
   — along the line from the prism beside it, down the slope from the line
@@ -752,6 +817,95 @@ records conventions that are easy to break.
   `mendung` and `hujan` at the same illuminance. Everything on top is paint
   plus one transform — it sits over a sphere that is already animating, so
   nothing there may force a re-layout.
+- Cloud is drawn twice over, and the two are not alternatives. The base
+  panorama has an **overcast render of its own** — `base-dam-mendung`, a
+  render like the four hours are — and the stage wears it whenever the sky is
+  covered (`OVERCAST`, 0.55) and the hour is daylight. Cloud that is in the
+  photograph stays where it is when the camera turns, hides the sun instead of
+  dimming it, and takes the reservoir with it; paint over the top can only ever
+  do the last of those. Everything else — the other three hours, the station
+  panoramas, the page backdrops — keeps the painted deck below, which is why
+  both exist.
+- Which texture the stage wears is `twinSphere.stagePhase`, not `sunPhase`:
+  the hour, unless the sky is covered and there is a render of it. It asks for
+  the sky state's own code first (`mendung`, `rintik`, `hujan`) and falls back
+  to the overcast sphere for any covered state that has no render of its own —
+  a downpour under an overcast sphere with the rain drawn over it is far
+  nearer the truth than a downpour under a sunny one. So building `rintik`
+  later is a file plus a line of config and nothing in the component; nothing
+  there names a state except that one fallback. `OVERCAST` is 0.55, which is
+  the figure `SkyState::classify()` calls `mendung` — keep the two together.
+  `MonitoringService::basePhases()` **omits** a weather name whose file was
+  never built instead of aliasing it to daylight the way the solar phases do —
+  a clear sky returned under the name `mendung` would be a stage that believed
+  it was covered. `config('dam.stage.weather')` lists the names.
+- Every place that asks for the base texture asks `stagePhase` — `mount()`,
+  `show()` and `loadHd()`. `show()` on `sunPhase` is what made the way back
+  out of a station read as a stutter under a covered sky: the return
+  cross-faded to the plain daylight dam, and `applyPhase()` then swapped it
+  again a beat later, so one move out of the station was two fades with the
+  wrong weather standing between them.
+- `mount()` seeds `phase` from `stagePhase` and `applyPhase()` re-arms its own
+  timer while the stage is not ready or an arrival is in the air. A watcher
+  only ever hears about a *change*: without the first, a page opened under a
+  covered sky built the sunny sphere and stayed on it; without the second, a
+  scenario picked a second too early was dropped for the rest of the session.
+- `sky-baked` takes the veil and the painted deck away, and it asks where the
+  stage is *going* (`stagePhase`), not what it is wearing. Two skies over one
+  another is a grey heavy enough to take the valley with it — but the worse
+  half was the transition: the swap is debounced and then cross-fades, so
+  keying it on the texture that had landed let the painted lid rise over a
+  sphere that was still sunny and sink again a beat later. Grey blooming over
+  a blue sky and then clearing is not weather arriving, it reads as smoke.
+  Nothing is painted from the moment the answer is a render; the picture
+  changing is the whole of the transition. The haze and the rain stay — those
+  are the air in front of the picture, not the sky in it.
+- The swap itself is not debounced. `applyPhase()` waits 400ms for an *hour*,
+  because scrubbing the clock crosses several in a second, and a weather change
+  waits for nothing — the rain starts in the frame the button was pressed, so
+  there is no paint left to hide the pause behind, and the sky standing still
+  for half a second reads as the control having missed the click. Only the
+  retry (`applyPhase(400)`) carries a wait, or the zero-delay path spins for
+  the length of an arrival.
+- The weather previews are warmed at `ready` (`warmWeather()`, previews only).
+  `setPanorama` does not begin its cross-fade until the texture has landed, so
+  an unwarmed render is a button that does nothing for as long as the file
+  takes, and all of that falls between the click and the first frame of the sky
+  moving. The HD is warmed by the swap, alongside the fade rather than after it.
+- `.sky-baked` takes the paint away over the same 900ms the render fades in,
+  the deck as well as the veil. The deck had no transition at all, so the lid
+  and the lumps snapped off in one frame while the overcast sphere was still
+  arriving: pressing "hujan" over a clear valley made the sky *brighter* first
+  and dropped rain on a sunny dam until the picture caught up. Paint and
+  picture cross over together, or the swap reads as the sky clearing.
+- A weather swap cross-fades at the quick speed (900ms), not the 2600ms the
+  hours use. That slow fade is for a valley whose light should change the way
+  it does outside; a reader who pressed a button and waited three seconds
+  reads it as the control having missed the click.
+- The veil says how much light the sky lost; `.sky-clouds` says what is up
+  there. Two decks of soft lumps (`site.cloudDecks`), tiled sideways and
+  drifting at their own speeds. Under the lumps sits the **lid** — the sheet of
+  grey a covered sky actually is — and it is what separates `berawan` from
+  `mendung`: brighter white lumps over the render's own blue only ever read as
+  haze on a sunny day, because the blue and the sun disc are still there. The
+  lid follows a smoothstep, so nothing below a third of cover is a lid at all
+  (that is `berawan`, which is gaps) and the last of the blue closes well
+  before the figure reaches 1.
+- The deck is a tile repeated with `repeat-x`, so every lump has to close
+  inside its tile or the join draws a hard vertical line down the sky. The
+  gradients paired at `0%` and `100%` are the two halves of one lump
+  straddling that join.
+- Cloud sits behind the dam, so on the stage the deck travels with the
+  *camera*, not with the sphere: `twinSphere.cloudShift` writes `--sky-x` from
+  the bearing and `--sky-y` from the pitch. Painted at a fixed place on the
+  screen it followed the reader around, and a sky that cannot be turned away
+  from is the one thing that reads as a layer rather than as weather. The
+  sideways shift is wrapped into one tile (the repeat makes that invisible);
+  the vertical one has no wrap and is held inside the overhang the band was
+  given, which is why `.sky-clouds` is 190% tall and starts at `-80%`. Every
+  percentage inside it — the lumps, the mask, `--cloud-reach` — is a percentage
+  of that band, where 44% is the top of the stage with the camera level.
+  Pages with no camera leave both variables at zero.
 - Three layers, each for one cue. `.sky-veil` is weighted to the top of the
   frame, because overcast lifts the sky towards white long before it darkens
   the ground — a flat grey over the whole picture reads as a filter switched
@@ -786,6 +940,19 @@ records conventions that are easy to break.
   conversation, or a rotated back-arrow standing in for a chevron, is how the
   set drifts. `x-icon` falls back to `sensor` when a name is unknown, so a typo
   shows up as the wrong glyph rather than a blank space.
+- `resources/js/lib/icons.js` is the same map for markers the browser renders
+  (station pins, hotspot chips); the two files mirror each other, so a glyph
+  added to one is added to the other under the same name.
+- A pin's glyph is keyed by the station's `type`, and a type is an **instrument
+  family**, not a measurement. Two stations of one family share a glyph — three
+  AWLR, two ADR — but two families that happen to measure the same water must
+  not: AWQR and the sediment sampler were both `water_quality`, so both drew a
+  droplet and neither could be told from the other at 13 px. That is why
+  `sedimen-bendungan` is `sediment` and `gnss-tilt` is `gnss` rather than
+  `deformation`, which stays the ADR total stations. Splitting a type adds an
+  option to the sensor-page filter and the dashboard station list, so it also
+  needs its `typeLabel()` entry — and a water measure needs adding to
+  `waterTypes` in `twin-sphere.js` or the "Ukuran Air" pill silently drops it.
 
 ## Instrument catalogue
 
@@ -804,6 +971,118 @@ records conventions that are easy to break.
   the simulator, the slider, and the order. An order past it is **refused**,
   never trimmed — quietly reducing 140 cm to 100 would record an order nobody
   gave and leave the operator believing the gate is going somewhere it is not.
+
+## Piezometer section
+
+- A piezometer is **buried**, so there is nothing of it in a photograph to
+  stand a pin on. What the reader can look at is the cut it sits in, so one
+  marker (`type = 'piezo'`) opens a *drawing* rather than flying anywhere:
+  `MonitoringService::piezoSection()` builds it, `viewer.sectionSvg` draws it,
+  and the dialog is teleported like every other. It stands in the AVWR
+  panorama, looking at the body those instruments are buried in — the picture
+  a reader is already in when the question comes up.
+- The marker is the **glyph alone** — a plate with the section symbol on it,
+  its ring in the worst status of the instruments inside. It stands on the dam
+  body among hotspots that are named there already, and what it is and what is
+  in it are on its tooltip and in the drawing it opens, which is where a reader
+  who wants them is going anyway. `sectionName()` writes that line so the
+  tooltip and the marker's accessible name cannot drift apart.
+- The marker carries `data-hotspot` as well as `data-section`, so placement
+  needs no machinery of its own: inside a station the drag handle is picked up
+  by that attribute, and the drop posts to `/api/hotspots/{id}/position` like
+  any other hotspot. Its position in the marker payload comes from the
+  record's own `yaw`/`pitch` rather than the section's copy of them, because a
+  drag writes the record first.
+- `dragId` has to answer with the id the marker was **built** with, and a
+  section's is `section-<id>`, not `hotspot-<id>`. On the wrong one
+  `updateMarker` addresses a marker that does not exist: nothing follows the
+  pointer, and the plate only appears at its new angles once the drop has
+  written the record. That is placement done blind, and it is what a marker
+  that will not drag smoothly is telling you.
+- The instruments are **listed, not counted** (`meta.points`, each with
+  `code`, `elevation`, `offset` from the axis in metres positive downstream,
+  and `kind` — `pondasi` or `timbunan`). A row of monitoring plots can derive
+  five stakes from a centre and a spacing; here every instrument sits at its
+  own elevation and its own distance from the axis, and there is no regular
+  step to derive.
+- A point's figure is **not** a hash of its code, and must never become one.
+  One phreatic surface is stood over the section — the source station's own
+  `piezo_level`, falling `meta.gradient` per metre downstream — and every
+  instrument takes the water standing above it: deeper reads higher, upstream
+  higher than downstream. `stakes()` hashes because nothing in a total
+  station's reading says which prism moved; here there is real physics, and
+  hashing it away would be inventing over the top of an answer. Only two
+  things are per point and deterministic from the code: a couple of per cent
+  of sensor scatter, and a cubed local rise of the *surface* so a handful sit
+  in a wetter path — on the surface and not on the head, so a point standing
+  well clear of the water cannot be made wet by it.
+- Dry is not zero. An instrument above the surface is drawn hollow and prints
+  "kering"; 0 kPa would be a reading, and near the crest the absence of one is
+  what the design expects.
+- The band is **freeboard** — how far the piezometric level stands below the
+  design line over that same point, in metres (`< 2` waspada, `< 1` siaga,
+  above the line bahaya). Never one kPa threshold across the section, since an
+  instrument under the foundation and one near the crest cannot be judged by
+  the same number; and never the head against the design head either, which
+  was the first shape and the wrong one. Both of those grow with depth, so
+  their ratio comes out near 1 for every deep instrument and the section reads
+  amber for the crime of being tall — four of eleven points were waspada on a
+  dam nothing was wrong with. What an engineer watches is the surface climbing
+  towards the line it may not cross, and that is a distance in metres wherever
+  you stand. It is also what makes the per-point wet paths the thing that
+  raises the alarm, which is the only thing on this section that varies.
+- Each row carries its elevation at its downstream end, the way the drawing
+  prints it, and rows nearer than two metres are one row: the foundation
+  instruments sit within a metre of each other, and labelling each of them
+  printed four elevations on top of one another.
+- The section is drawn **1:1**, with no vertical exaggeration. It is the
+  drawing somebody reads a slope off; stretching the height makes a prettier
+  picture and a dishonest one. It comes out wide and short, so the dialog
+  scrolls it sideways rather than squashing it.
+- The SVG carries its own `width`/`height` and the CSS must not stretch it to
+  the container. On `width: 100%` the browser fits whatever viewBox it is
+  given back into the same box, so drawing at a larger scale made the type
+  *smaller* — the only thing that grew was the coordinate space. It keeps the
+  size it was drawn at, and the panel scrolls.
+- The label — name over figure — stands **beside** its instrument, on the side
+  away from the axis. Above and below cannot work here: a two-line label is
+  nearly thirty pixels tall while the rows are eight metres apart, barely
+  fifty, so whichever way each point was pushed the reading of one row came
+  down on the name of the next. Putting it one line high on each side was
+  tried too, and it fixed the rows at the cost of the pairs. Beside the point
+  the label needs no vertical room beyond its own height, centred on the
+  instrument; and away from the axis is what keeps a pair apart, because the
+  two sit either side of the core and their labels then grow in opposite
+  directions instead of into the gap between them. The dark halo
+  (`paint-order: stroke`) stays, for the places that are still close.
+- The dialog is `.modal-card--section`, not `--wide`: it takes the screen it is
+  given (`min(1720px, 100vw - 2rem)`), so on a control-room monitor the whole
+  cut is visible at once and nothing has to be scrolled to. On a laptop the
+  panel still scrolls rather than shrinking the one drawing in the app that
+  must keep its scale.
+- The panel opens scrolled to the middle. At a legible scale the drawing is
+  nearly twice the dialog's width and every instrument is near the axis, so
+  opening at the upstream edge showed a reader several hundred pixels of
+  reservoir and no piezometers.
+- On the marker only the ring carries the status; the glyph stays white.
+  Colouring both turned the plate into a warning sign, and a section is a
+  place to look — what is wrong is a property of the instruments inside it,
+  not of the cut.
+- Foundation piezometers are square and embankment ones round, so the two
+  families stay apart without spending colour on them — the colour is the
+  status, which is the other question.
+- A section can stand on either panorama, so it is carried in both payloads
+  and `viewer.section` looks in both: a station's own hotspots
+  (`hotspot.section`) and the stage payload
+  (`environment.stage.base.sections`), which is what a section on the base dam
+  would ride so the reader could reach it without visiting a station first.
+  The dialog resolves it on every read rather than copying it in when it was
+  opened, so the phreatic line and the readings stay live instead of freezing.
+- The geometry (`crest`, `foundation`, `crest_width`, `slope_up` / `slope_down`,
+  the core, `water`, `design_phreatic`, `gradient`) and the instrument schedule
+  are **an estimate** seeded in `StationSeeder`, the same standing the seeded
+  marker angles have. Replace them with the real section when the drawing is to
+  hand; nothing else has to change.
 
 ## Spillway gates
 
@@ -845,8 +1124,21 @@ records conventions that are easy to break.
   bay when it is shut — the way the real one moves. It was first drawn as the
   gap *under* the leaf, which put the shape on screen travelling the opposite
   way to the thing it stands for: a gate closing looked like a gate opening.
-  The leaf is steel-coloured for the same reason; blue would have said water
-  where the steel is.
+  Whatever it is painted, it may never be the colour of water; that would say
+  the opposite of what the shape is.
+- Bay and leaf are drawn in one green (`--gate-line` on `.psv-cell`), and the
+  leaf is **hatched** rather than filled flat — `#gate-hatch`, a `<pattern>`
+  declared once on the twin page, because `fill` cannot take a repeating
+  gradient and the viewer's marker SVG resolves `url(#…)` against the page it
+  renders into. `userSpaceOnUse` holds the stripes at a fixed size on screen
+  while the bay under them scales with the zoom, the same bargain the stake
+  markers take. A solid panel drawn over a photograph of a solid panel says
+  nothing; a hatch reads as a marking laid on the structure.
+- That green is `#34d399`, which is also `normal` in the status palette, and
+  it is a deliberate exception rather than an oversight: a bay is a structure,
+  not a reading, and nothing about it changes colour with a threshold. Nothing
+  else on the sphere may borrow a status colour for a shape that has no
+  status — the prisms and their petak carry real ones.
 
 ## Access control
 
@@ -966,6 +1258,18 @@ records conventions that are easy to break.
   picks the one matching the dominant solar phase and cross-fades between them,
   so `loadHd()` must resolve the phase asset too — pointing it at the station's
   own `panorama` puts the plain daylight sphere back on screen.
+- The weather spheres are renders too, from the same viewpoint and the same
+  folder (`Panoramic_Base_Dam_Mendung.png`), built by
+  `tools/build_panorama_weather.py` through the identical pipeline. Painting
+  one instead was tried and thrown away: a sky repainted over the daylight
+  render has to guess where the skyline is, and the distant ridges of this
+  valley are as blue and nearly as bright as the sky above them — the guess
+  cut them into vertical strips that read as a city of grey towers along the
+  horizon. Nothing separates a hazed mountain from the sky it stands against
+  except knowing which is which, and only the render knows.
+- Adding a weather sphere is one line in that script's `SOURCES` and one in
+  `config('dam.stage.weather')`, under the same name — the sky states
+  `SkyState` reports, so they are Indonesian.
 - Delivery spheres are 4096x2048 at WebP q82, previews 2048x1024 at q72. The
   sources are 1774px wide, so everything past ~4096 is upscaler invention: the
   old 5120/6144 q90 files were twice the bytes for detail that was never in the

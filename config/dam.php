@@ -62,6 +62,19 @@ return [
         */
         'drift_arc' => 55.0,
 
+        /*
+        | Weather textures for the base panorama, on top of the four
+        | time-of-day ones. Each is a render of its own from the same
+        | viewpoint (`tools/build_panorama_weather.py`), not the daylight
+        | sphere with a new sky painted over it: cloud that is *in* the
+        | picture stays where it is when the camera turns, hides the sun
+        | instead of dimming it, and takes the reservoir with it. Listed in
+        | order of cover, and named after the states `SkyState` reports, since
+        | that is the name the stage asks for. A name with no file behind it
+        | is simply not offered, and the stage keeps the solar texture.
+        */
+        'weather' => ['berawan', 'mendung'],
+
         'sphere' => [
             'yaw_offset' => 0.0,    // rotate every derived bearing, degrees
             'pitch_near' => -32.0,  // a pin right below the camera

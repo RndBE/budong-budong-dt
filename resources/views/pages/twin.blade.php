@@ -23,6 +23,22 @@
                  'sphere--departing': departing,
              }">
 
+            {{-- The hatch the spillway leaves are filled with. It has to be a
+                 real `<pattern>` in the document, because `fill` cannot carry
+                 a repeating gradient — the viewer's own marker SVG resolves
+                 `url(#gate-hatch)` against the page it is rendered into. --}}
+            <svg width="0" height="0" class="absolute" aria-hidden="true" focusable="false">
+                <defs>
+                    <pattern id="gate-hatch" width="9" height="9"
+                             patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+                        {{-- Under the stripes, so the leaf still reads as a
+                             panel and not as an empty outline. --}}
+                        <rect width="9" height="9" fill="#0d1f2b" fill-opacity="0.34" />
+                        <rect width="3" height="9" fill="#34d399" fill-opacity="0.55" />
+                    </pattern>
+                </defs>
+            </svg>
+
             {{-- Photo Sphere Viewer mounts here. The solar grade is applied to
                  the whole canvas so the panorama follows the time of day. --}}
             <div x-ref="sphere"
@@ -35,7 +51,12 @@
                  }"></div>
 
             {{-- Cloud and rain, from the weather station or the scenario. --}}
-            <div class="pointer-events-none absolute inset-0 overflow-hidden">
+            <div class="pointer-events-none absolute inset-0 overflow-hidden">            {{-- Cloud and rain, from the weather station or the scenario. The
+                 cloud deck is given the camera's bearing, so it sits behind the
+                 dam instead of being painted on the screen. --}}
+            <div class="pointer-events-none absolute inset-0 overflow-hidden"
+                 :class="{ 'sky-baked': bakedSky }"
+                 :style="cloudShift">
                 @include('partials.sky-layers')
             </div>
 
@@ -302,9 +323,20 @@
                 </button>
 
             {{-- Time control: follow the real clock, scrub a day, or play it back
-                 faster than real time. Hidden where the panel toggle sits. --}}
+                 faster than real time. Hidden where the panel toggle sits, and
+                 hidden inside a station: the hour and the sky belong to the
+                 stage rather than to one instrument, and this corner is where
+                 that station's own gate control stands. Same reasoning as the
+                 station search in the header.
+
+                 `x-show` here only ever *removes* the inline display, so the
+                 `max-xl:hidden` breakpoint still decides the rest. The panel
+                 is closed on the way in, or it would be standing open on the
+                 way back out. --}}
             <div class="relative max-xl:hidden"
-                 x-data="{ open: false }" @click.outside="open = false">
+                 x-show="! $store.viewer.open" x-cloak
+                 x-data="{ open: false }" @click.outside="open = false"
+                 x-effect="if ($store.viewer.open) open = false">
 
                 <button type="button"
                         class="glass glass--chip flex items-center gap-1.5 px-3 py-2 text-[11px] font-semibold text-mist-200 transition hover:brightness-125"
@@ -410,6 +442,140 @@
         {{-- Gate control. Teleported, because the stage sits in a transformed
              stacking context and a fixed scrim declared inside it is trapped
              under the header however high its z-index climbs. --}}
+        {{-- The section of piezometers, as a drawing.
+
+             A buried instrument has nothing in the photograph to stand a pin
+             on, so what the reader opens from the dam is the cut it sits in:
+             the body, its core, the reservoir against the upstream face, the
+             phreatic surface the readings describe, and every piezometer at
+             its own elevation and its own distance from the axis. Teleported
+             like every other dialog, and neither the scrim nor the card is
+             backdrop-filtered. --}}
+        <template x-teleport="body">
+            <div x-show="$store.viewer.sectionOpen" x-cloak x-transition.opacity.duration.150ms
+                 class="modal-scrim" @click.self="$store.viewer.closeSection()"
+                 @keydown.escape.window="$store.viewer.sectionOpen && $store.viewer.closeSection()">
+                <div class="modal-card modal-card--section glass glass--panel glass--menu p-4"
+                     x-show="$store.viewer.sectionOpen" x-transition
+                     role="dialog" aria-modal="true" aria-labelledby="section-dialog-title">
+                    <template x-if="$store.viewer.section">
+                        <div>
+                            <div class="mb-3 flex items-start justify-between gap-3">
+                                <div class="min-w-0">
+                                    <h3 id="section-dialog-title" class="text-[15px] font-semibold text-white"
+                                        x-text="$store.viewer.section.label"></h3>
+                                    <p class="mt-0.5 text-[11px] text-mist-400">
+                                        Garis freatik berdiri dari
+                                        <span class="font-semibold text-mist-200"
+                                              x-text="$store.viewer.section.station?.short_name ?? 'stasiun'"></span>
+                                        pada
+                                        <span class="tnum font-semibold text-mist-200"
+                                              x-text="$store.viewer.section.level !== null ? '+' + $store.viewer.section.level.toLocaleString('id-ID', {minimumFractionDigits: 2}) + ' mdpl' : 'belum terbaca'"></span>,
+                                        turun
+                                        <span class="tnum font-semibold text-mist-200"
+                                              x-text="$store.viewer.section.gradient.toLocaleString('id-ID', {minimumFractionDigits: 2})"></span>
+                                        m tiap meter ke hilir. Yang dibaca tiap titik adalah air yang berdiri di atasnya.
+                                    </p>
+                                </div>
+                                <button type="button" class="glass glass--chip glass-button size-9 shrink-0"
+                                        title="Tutup" aria-label="Tutup potongan"
+                                        @click="$store.viewer.closeSection()">
+                                    <x-icon name="x" class="size-4"/>
+                                </button>
+                            </div>
+
+                            {{-- The drawing scrolls sideways rather than being
+                                 squashed: a section squeezed to fit a phone is
+                                 a section whose slopes are a lie. --}}
+                            {{-- Opened on the middle of the section, not on its
+                                 upstream edge: the drawing is wider than the
+                                 dialog at a legible scale, and the instruments
+                                 are all near the axis. Scrolling to find them
+                                 is a puzzle nobody asked for. --}}
+                            <div class="glass glass--inset overflow-x-auto p-2"
+                                 x-effect="$store.viewer.sectionOpen
+                                     && $nextTick(() => { $el.scrollLeft = ($el.scrollWidth - $el.clientWidth) / 2; })">
+                                <div class="w-max" x-html="$store.viewer.sectionSvg"></div>
+                            </div>
+
+                            <div class="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-mist-300">
+                                <span class="flex items-center gap-1.5"><span class="psv-key psv-key--pondasi"></span> Piezometer pondasi</span>
+                                <span class="flex items-center gap-1.5"><span class="psv-key psv-key--timbunan"></span> Piezometer timbunan</span>
+                                <span class="flex items-center gap-1.5"><span class="psv-key psv-key--dry"></span> Kering, di atas garis freatik</span>
+                                <span class="flex items-center gap-1.5"><span class="psv-key psv-key--phreatic"></span> Garis freatik terukur</span>
+                                <span class="flex items-center gap-1.5"><span class="psv-key psv-key--design"></span> Garis rencana</span>
+                            </div>
+
+                            {{-- Below `sm` the table renders as cards, the way
+                                 every other table in the app does. --}}
+                            <div class="scroll-y mt-3 max-h-[min(34dvh,300px)] pr-0.5">
+                                <table class="w-full max-sm:hidden">
+                                    <thead>
+                                        <tr class="text-left text-[10.5px] tracking-wide text-mist-400 uppercase">
+                                            <th class="py-1.5 pr-2 font-semibold">Titik</th>
+                                            <th class="py-1.5 pr-2 font-semibold">Letak</th>
+                                            <th class="py-1.5 pr-2 text-right font-semibold">Elevasi</th>
+                                            <th class="py-1.5 pr-2 text-right font-semibold">Jarak as</th>
+                                            <th class="py-1.5 pr-2 text-right font-semibold">Kolom air</th>
+                                            <th class="py-1.5 pr-2 text-right font-semibold">Tekanan</th>
+                                            <th class="py-1.5 text-right font-semibold">Sisa ke rencana</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <template x-for="p in $store.viewer.section.points" :key="p.code">
+                                            <tr class="border-t border-white/8 text-[12px]">
+                                                <td class="py-1.5 pr-2 font-semibold text-white" x-text="p.code"></td>
+                                                <td class="py-1.5 pr-2 text-mist-300"
+                                                    x-text="p.kind === 'pondasi' ? 'Pondasi' : 'Timbunan'"></td>
+                                                <td class="tnum py-1.5 pr-2 text-right text-mist-200"
+                                                    x-text="'+' + p.elevation.toLocaleString('id-ID', {minimumFractionDigits: 2})"></td>
+                                                <td class="tnum py-1.5 pr-2 text-right text-mist-200"
+                                                    x-text="(p.offset > 0 ? '+' : '') + p.offset.toLocaleString('id-ID') + ' m'"></td>
+                                                <td class="tnum py-1.5 pr-2 text-right font-semibold"
+                                                    :class="p.dry ? 'text-mist-400' : 'text-white'"
+                                                    x-text="p.dry ? 'kering' : p.head.toLocaleString('id-ID', {minimumFractionDigits: 2}) + ' mH2O'"></td>
+                                                <td class="tnum py-1.5 pr-2 text-right"
+                                                    :class="{
+                                                        'text-mist-400': !p.status,
+                                                        'text-state-normal': p.status === 'normal',
+                                                        'text-state-waspada': p.status === 'waspada',
+                                                        'text-state-siaga': p.status === 'siaga',
+                                                        'text-state-bahaya': p.status === 'bahaya',
+                                                    }"
+                                                    x-text="p.dry ? '—' : p.pressure.toLocaleString('id-ID', {minimumFractionDigits: 1}) + ' kPa'"></td>
+                                                {{-- The figure the colour comes from: how far this
+                                                     point still stands below the design line. --}}
+                                                <td class="tnum py-1.5 text-right text-mist-400"
+                                                    x-text="p.dry ? '—' : p.freeboard.toLocaleString('id-ID', {minimumFractionDigits: 2}) + ' m'"></td>
+                                            </tr>
+                                        </template>
+                                    </tbody>
+                                </table>
+
+                                <ul class="grid gap-1.5 sm:hidden">
+                                    <template x-for="p in $store.viewer.section.points" :key="p.code">
+                                        <li class="glass glass--inset p-2.5">
+                                            <div class="flex items-baseline justify-between gap-2">
+                                                <span class="text-[12.5px] font-semibold text-white" x-text="p.code"></span>
+                                                <span class="tnum text-[12.5px] font-semibold"
+                                                      :class="p.dry ? 'text-mist-400' : 'text-white'"
+                                                      x-text="p.dry ? 'kering' : p.head.toLocaleString('id-ID', {minimumFractionDigits: 2}) + ' mH2O'"></span>
+                                            </div>
+                                            <p class="tnum mt-0.5 text-[11px] text-mist-300">
+                                                <span x-text="p.kind === 'pondasi' ? 'Pondasi' : 'Timbunan'"></span> ·
+                                                <span x-text="'+' + p.elevation.toLocaleString('id-ID', {minimumFractionDigits: 2}) + ' mdpl'"></span> ·
+                                                <span x-text="(p.offset > 0 ? '+' : '') + p.offset.toLocaleString('id-ID') + ' m dari as'"></span>
+                                            </p>
+                                        </li>
+                                    </template>
+                                </ul>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </template>
+
         <template x-teleport="body">
             <div x-show="$store.viewer.gatesOpen" x-cloak x-transition.opacity.duration.150ms
                  class="modal-scrim" @click.self="$store.viewer.closeGates()"

@@ -2,12 +2,26 @@
 
 <div class="flex items-start gap-4 max-lg:gap-2">
 
-    {{-- Identity --}}
-    <div class="pointer-events-auto flex items-center gap-3 pl-1 pr-2">
+    {{-- Identity.
+
+         The name stays on one line and ellipsises. The digital twin is the
+         only page that puts a search field in this row; the name used to give
+         that field its width and wrap onto two, and because the header is
+         sized by its content that alone made the twin's header some fifty
+         pixels taller than every other page — the whole top of the screen read
+         as spaced further apart there, which is not a thing a page should
+         differ in. It may not be `shrink-0` either: held at its full width the
+         row overflows and the account menu walks off the right edge by 900px.
+         So it shrinks, and truncates rather than wrapping. --}}
+    <div class="pointer-events-auto flex min-w-0 items-center gap-3 pl-1 pr-2">
         <img src="{{ asset('assets/logopu.png') }}" alt="Logo Kementerian Pekerjaan Umum"
              class="size-11 shrink-0 rounded-2xl object-cover shadow-[0_14px_30px_-14px_rgba(2,8,20,.9)]">
-        <div class="leading-tight">
-            <h1 class="text-[19px] font-extrabold tracking-tight text-white uppercase max-lg:text-[15px] max-sm:text-[13px]">Bendungan Budong Budong</h1>
+        {{-- A floor, so the name shrinks to something rather than to nothing:
+             this row is already wider than the screen below about 1100px with
+             the search in it, and a header whose title has vanished entirely
+             is worse than one that is crowded. --}}
+        <div class="min-w-[6.5rem] leading-tight">
+            <h1 class="truncate text-[19px] font-extrabold tracking-tight text-white uppercase max-lg:text-[15px] max-sm:text-[13px]">Bendungan Budong Budong</h1>
             <p class="text-[12px] font-semibold tracking-wide text-mist-200/90 uppercase max-sm:text-[10px]">BWS Sulawesi V</p>
             <p class="mt-0.5 flex items-center gap-1.5 text-[10px] font-semibold tracking-[.14em] text-brand-300/90 uppercase max-lg:hidden">
                 <span class="status-dot bg-state-normal"></span>
@@ -70,7 +84,12 @@
              no pins to steer to and the search would only be a way out of the
              picture the reader just opened. --}}
         @if ($stationSearch)
-            <div x-show="!$store.viewer.open" x-cloak>
+            {{-- `contents`, so the wrapper is not a flex item of its own: it
+                 carries the open/closed rule, and the partial inside carries
+                 the breakpoint. A plain block here stayed in the row after the
+                 partial had hidden itself — nothing to see, but still two gaps
+                 wide. --}}
+            <div class="contents" x-show="!$store.viewer.open" x-cloak>
                 @include('partials.station-search')
             </div>
         @endif
@@ -87,7 +106,11 @@
         </a>
 
         @if ($stationSearch)
-            <div x-show="!$store.viewer.open" x-cloak>
+            {{-- Same again, and this is the one that showed: an empty block
+                 between the bell and the help button put a gap either side of
+                 nothing, so those two chips sat twice as far apart on the twin
+                 as on every other page. --}}
+            <div class="contents" x-show="!$store.viewer.open" x-cloak>
                 @include('partials.station-search', ['compact' => true])
             </div>
         @endif

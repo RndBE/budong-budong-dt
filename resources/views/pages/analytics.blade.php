@@ -11,9 +11,54 @@
 
         <div x-data="analyticsBoard(@js($stations))">
 
-            {{-- Controls: one station, one range, for everything on screen --}}
+            {{-- Which level, and the way back out of it. The overview has no
+                 crumb because it is where the trail starts. --}}
+            <nav class="mb-2 flex flex-wrap items-center gap-2 text-[11.5px]" aria-label="Jejak tampilan"
+                 x-show="scope !== 'semua'" x-cloak>
+                <button type="button" class="flex items-center gap-1 text-mist-300 transition hover:text-white"
+                        @click="backToStations()">
+                    <x-icon name="arrow-left" class="size-3.5"/>
+                    Semua stasiun
+                </button>
+                <span class="text-mist-500" aria-hidden="true">/</span>
+                <span class="truncate font-semibold text-white" x-text="station?.name ?? ''"></span>
+                <template x-if="mode === 'analisa' && picked.length === 1">
+                    <span class="flex items-center gap-2">
+                        <span class="text-mist-500" aria-hidden="true">/</span>
+                        <span class="truncate text-mist-200" x-text="metricOf(picked[0])?.label ?? ''"></span>
+                    </span>
+                </template>
+            </nav>
+
+            {{-- Controls: what this level actually has to offer.
+                 The way in is every station's headline parameter, so there is
+                 no station to choose and no second view to switch to — both
+                 appear once the reader has picked a station. A control that
+                 has to be answered before anything can be looked at is what
+                 made the menu entry a dead end. --}}
             <div class="glass glass--panel mb-3.5 flex flex-wrap items-end gap-3 p-3.5" x-sheen>
-                <label class="min-w-[260px] flex-1">
+                {{-- The overview names itself instead of offering a choice --}}
+                <div class="min-w-[260px] flex-1" x-show="scope === 'semua'" x-cloak>
+                    <span class="mb-1.5 block text-[11px] font-medium text-mist-300">Semua stasiun</span>
+                    <div class="flex min-h-[42px] flex-wrap items-center gap-3">
+                        <p class="text-[12.5px] text-white">Parameter utama tiap stasiun</p>
+                        {{-- One text button, not a view toggle: comparing three
+                             AWLR water levels in one picture is why this screen
+                             has a second view at all, and there is nothing else
+                             here to toggle between. --}}
+                        <button type="button" x-show="overview" x-cloak
+                                class="flex min-h-9 items-center gap-1.5 text-[11.5px] text-mist-300 transition hover:text-white"
+                                title="Tumpuk parameter utama beberapa stasiun dalam satu grafik"
+                                @click="combineHeadlines()">
+                            <x-icon name="chart-line" class="size-3.5"/>
+                            Gabungkan dalam satu grafik
+                        </button>
+                    </div>
+                </div>
+
+                {{-- Inside a station the dropdown is the way across to another
+                     one, which is a different job from choosing one to start. --}}
+                <label class="min-w-[260px] flex-1" x-show="scope !== 'semua'" x-cloak>
                     <span class="mb-1.5 block text-[11px] font-medium text-mist-300">Stasiun</span>
                     <select class="glass glass--inset w-full appearance-none px-3.5 py-2.5 text-[12.5px] text-white"
                             :value="scope" @change="setScope($event.target.value)">
@@ -36,7 +81,9 @@
                     </div>
                 </div>
 
-                <div>
+                {{-- Two readings of one station's parameters. There is only
+                     one reading of the overview, so the toggle is not there. --}}
+                <div x-show="scope !== 'semua'" x-cloak>
                     <span class="mb-1.5 block text-[11px] font-medium text-mist-300">Tampilan</span>
                     <div class="glass glass--inset flex items-center gap-0.5 p-0.5" role="tablist"
                          aria-label="Tampilan analisa">
@@ -73,7 +120,9 @@
                 <template x-for="card in cards" :key="card.id">
                     <button type="button"
                             class="glass glass--panel p-3.5 text-left transition hover:ring-1 hover:ring-brand-400/40"
-                            title="Buka di Analisa"
+                            :title="scope === 'semua'
+                                ? `Buka semua parameter ${card.station}`
+                                : 'Buka di Analisa'"
                             @click="open(card)">
                         <div class="mb-2 flex items-start justify-between gap-3">
                             <div class="min-w-0">

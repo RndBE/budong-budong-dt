@@ -199,6 +199,7 @@ class MonitoringService
                     'bearing' => $base->panorama_bearing,
                 ],
                 'phases' => $this->basePhases($base),
+                'sections' => $base ? $this->sections($base) : [],
             ] : null,
             'default_zoom' => (int) config('dam.stage.default_zoom', 45),
             'drift_arc' => (float) config('dam.stage.drift_arc', 55),
@@ -290,12 +291,19 @@ class MonitoringService
     }
 
     /**
-     * Time-of-day textures for the base panorama.
+     * Textures for the base panorama: one per time of day, plus the weather.
      *
-     * All four are rendered from the same viewpoint (`Transitions/Base Dam`)
-     * and built by `tools/build_panorama_phases.py`, so the stage can cross-fade
-     * between them. A phase without a file falls back to the daylight sphere,
-     * so a half-built asset folder still works.
+     * The four solar ones are rendered from the same viewpoint
+     * (`Transitions/Base Dam`) and built by `tools/build_panorama_phases.py`,
+     * so the stage can cross-fade between them. A phase without a file falls
+     * back to the daylight sphere, so a half-built asset folder still works.
+     *
+     * The weather ones (`tools/build_panorama_weather.py`) are the exception
+     * to that fallback: they are *omitted* when the file is missing rather
+     * than aliased to daylight, because the stage has to be able to tell that
+     * there is no overcast render and keep painting cloud over the screen
+     * instead. A daylight sphere returned under the name `mendung` would be a
+     * clear sky the stage believed was covered.
      *
      * @return array<string, array{url: string, preview: string}>
      */
@@ -303,15 +311,24 @@ class MonitoringService
     {
         $day = ['url' => $base->panoramaUrl(), 'preview' => $base->panoramaPreviewUrl()];
 
-        return collect(config('dam.map.phases'))
-            ->mapWithKeys(function (string $phase) use ($base, $day) {
-                $file = "assets/panorama/{$base->panorama}-{$phase}.webp";
+        $texture = fn (string $name) => [
+            'url' => asset("assets/panorama/{$base->panorama}-{$name}.webp"),
+            'preview' => asset("assets/panorama/preview/{$base->panorama}-{$name}.webp"),
+        ];
 
-                return [$phase => file_exists(public_path($file)) ? [
-                    'url' => asset($file),
-                    'preview' => asset("assets/panorama/preview/{$base->panorama}-{$phase}.webp"),
-                ] : $day];
-            })
+        $has = fn (string $name) => file_exists(
+            public_path("assets/panorama/{$base->panorama}-{$name}.webp")
+        );
+
+        $phases = collect(config('dam.map.phases'))
+            ->mapWithKeys(fn (string $phase) => [$phase => $has($phase) ? $texture($phase) : $day]);
+
+        return $phases
+            ->merge(
+                collect(config('dam.stage.weather', []))
+                    ->filter($has)
+                    ->mapWithKeys(fn (string $sky) => [$sky => $texture($sky)])
+            )
             ->all();
     }
 
@@ -475,6 +492,7 @@ class MonitoringService
                 'pitch' => $hotspot->pitch,
                 'meta' => $hotspot->meta ?? [],
                 'stakes' => $this->stakes($hotspot, $station, $readings),
+                'section' => $hotspot->isSection() ? $this->piezoSection($hotspot) : null,
                 'target' => $hotspot->targetStation?->only(['code', 'name']),
             ])->values()->all(),
             'metrics' => $metrics,
@@ -806,6 +824,174 @@ class MonitoringService
                 'status' => $metric ? $metric->statusFor($linear) : 'normal',
             ];
         }, $hotspot->stakeCodes());
+    }
+
+    /**
+     * The sections of piezometers standing on one panorama.
+     *
+     * They ride the stage payload rather than a station fetch because the one
+     * that matters stands on the *base* panorama — the reader has to be able
+     * to open the section from the picture of the dam, without visiting a
+     * station first. Refreshing with the environment poll is what keeps the
+     * phreatic line in the drawing current.
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function sections(SensorStation $base): array
+    {
+        return $base->hotspots()
+            ->where('type', 'piezo')
+            ->orderBy('sort_order')
+            ->get()
+            ->map(fn (PanoramaHotspot $hotspot) => $this->piezoSection($hotspot))
+            ->filter()
+            ->values()
+            ->all();
+    }
+
+    /**
+     * One section of vibrating-wire piezometers, read against the water
+     * standing over each of them.
+     *
+     * A point's figure is **not** a hash of its code, and must never become
+     * one. One phreatic surface is stood over the section — the source
+     * station's own `piezo_level`, falling `gradient` metres of head per metre
+     * downstream — and every instrument takes the water above it: deeper reads
+     * higher, upstream higher than downstream, and a point above the surface
+     * reads nothing at all. `stakes()` hashes because nothing in a total
+     * station's reading says which prism moved; here there is real physics,
+     * and hashing it away would be inventing over the top of an answer.
+     *
+     * Only two things are per point and deterministic from the code: a couple
+     * of per cent of sensor scatter, and a cubed local rise of the surface, so
+     * a handful of points sit in a wetter path than their neighbours. The rise
+     * is on the *surface*, not on the head, so a point standing well clear of
+     * the water cannot be made wet by it.
+     *
+     * @return array<string, mixed>
+     */
+    public function piezoSection(PanoramaHotspot $hotspot): array
+    {
+        $meta = $hotspot->meta ?? [];
+        $points = $hotspot->piezoPoints();
+
+        if ($points === []) {
+            return [];
+        }
+
+        $source = $this->sectionStation($hotspot);
+        $level = null;
+
+        if ($source) {
+            $readings = $this->telemetry->latest($source);
+            $level = $readings['piezo_level']['value'] ?? null;
+        }
+
+        $gradient = (float) ($meta['gradient'] ?? 0.16);
+        $design = (float) ($meta['design_phreatic'] ?? 0);
+
+        // A stable number per instrument, in 0..1, from its code alone.
+        $share = fn (string $code, string $salt) => (crc32($code.$salt) % 1000) / 1000;
+
+        $read = array_map(function (array $point) use ($level, $gradient, $design, $share) {
+            $code = (string) $point['code'];
+            $elevation = (float) $point['elevation'];
+            $offset = (float) $point['offset'];
+
+            $row = [
+                'code' => $code,
+                'kind' => $point['kind'] ?? 'timbunan',
+                'label' => $point['label'] ?? null,
+                'elevation' => round($elevation, 2),
+                'offset' => round($offset, 2),
+            ];
+
+            if ($level === null) {
+                // Nothing measured yet is not the same as nothing there.
+                return $row + ['head' => null, 'pressure' => null, 'level' => null,
+                    'design_head' => null, 'design_level' => null, 'freeboard' => null,
+                    'dry' => false, 'status' => null];
+            }
+
+            // The surface over this point, plus its own wetter path.
+            $surface = $level - $gradient * $offset + 3.0 * $share($code, 'path') ** 3;
+            $head = ($surface - $elevation) * (1 + ($share($code, 'scatter') - 0.5) * 0.05);
+            $dry = $head <= 0;
+
+            /*
+            | The band is **freeboard**, in metres: how far the piezometric
+            | level stands below the design line over that same point. Never
+            | one kPa threshold across the section — an instrument near the
+            | crest and one under the foundation cannot be judged by the same
+            | number — and never the head against the design head either,
+            | which was the first shape and the wrong one: both grow with
+            | depth, so their ratio comes out near 1 for every deep instrument
+            | and the section reads amber for the crime of being tall. What an
+            | engineer watches is the surface climbing towards the line it may
+            | not cross, and that is a distance in metres wherever you stand.
+            */
+            $designLevel = $design - $gradient * $offset;
+            $freeboard = $designLevel - ($elevation + $head);
+
+            return $row + [
+                'head' => $dry ? null : round($head, 2),
+                'pressure' => $dry ? null : round($head * 9.80665, 1),
+                'level' => $dry ? null : round($elevation + $head, 2),
+                'design_head' => round(max(0.0, $designLevel - $elevation), 2),
+                'design_level' => round($designLevel, 2),
+                'freeboard' => $dry ? null : round($freeboard, 2),
+                'dry' => $dry,
+                'status' => $dry ? null : match (true) {
+                    $freeboard < 0.0 => 'bahaya',
+                    $freeboard < 1.0 => 'siaga',
+                    $freeboard < 2.0 => 'waspada',
+                    default => 'normal',
+                },
+            ];
+        }, $points);
+
+        $order = ['normal' => 0, 'waspada' => 1, 'siaga' => 2, 'bahaya' => 3];
+        $worst = 'normal';
+
+        foreach ($read as $point) {
+            if (($order[$point['status'] ?? 'normal'] ?? 0) > $order[$worst]) {
+                $worst = $point['status'];
+            }
+        }
+
+        return [
+            'id' => $hotspot->id,
+            'label' => $hotspot->label,
+            'description' => $hotspot->description,
+            'yaw' => (float) $hotspot->yaw,
+            'pitch' => (float) $hotspot->pitch,
+            'station' => $source?->only(['code', 'name', 'short_name']),
+            'level' => $level === null ? null : round((float) $level, 2),
+            'gradient' => $gradient,
+            'design_phreatic' => $design,
+            // Crest, foundation, slopes and core: what the drawing is made of.
+            'geometry' => array_diff_key($meta, array_flip(['points', 'station'])),
+            'points' => $read,
+            'wet' => count(array_filter($read, fn (array $p) => $p['dry'] === false && $p['head'] !== null)),
+            'dry' => count(array_filter($read, fn (array $p) => $p['dry'] === true)),
+            'status' => $level === null ? null : $worst,
+        ];
+    }
+
+    /** The station a section reads its phreatic level from. */
+    private function sectionStation(PanoramaHotspot $hotspot): ?SensorStation
+    {
+        $code = $hotspot->meta['station'] ?? null;
+
+        if (! $code) {
+            return $hotspot->station()->with('metrics')->first();
+        }
+
+        return SensorStation::query()
+            ->where('dam_id', $this->dam()->id)
+            ->where('code', $code)
+            ->with('metrics')
+            ->first();
     }
 
     /**
@@ -1455,7 +1641,8 @@ class MonitoringService
             'piezometer' => 'Piezometer',
             'observation_well' => 'Observation Well',
             'seepage' => 'Rembesan',
-            'deformation' => 'Deformasi',
+            'deformation' => 'Deformasi / ADR',
+            'gnss' => 'GNSS & Tiltmeter',
             'weather' => 'Stasiun Cuaca',
             'rainfall' => 'Curah Hujan',
             'gate' => 'Pintu Air',

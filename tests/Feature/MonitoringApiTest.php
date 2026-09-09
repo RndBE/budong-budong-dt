@@ -880,7 +880,11 @@ class MonitoringApiTest extends TestCase
             ->assertOk()
             ->json('stage.base.phases');
 
-        $this->assertSame(config('dam.map.phases'), array_keys($phases));
+        // Every hour of the day, then whatever weather has been rendered.
+        $this->assertSame(
+            config('dam.map.phases'),
+            array_slice(array_keys($phases), 0, count(config('dam.map.phases')))
+        );
 
         foreach ($phases as $phase => $asset) {
             $this->assertNotEmpty($asset['url'], "Fase {$phase} tidak punya tekstur.");
@@ -890,6 +894,33 @@ class MonitoringApiTest extends TestCase
         $this->assertStringContainsString('base-dam-night', $phases['night']['url']);
         $this->assertStringContainsString('base-dam-dawn', $phases['dawn']['url']);
         $this->assertStringContainsString('base-dam-dusk', $phases['dusk']['url']);
+    }
+
+    public function test_a_weather_texture_is_only_offered_when_it_has_been_rendered(): void
+    {
+        $base = config('dam.stage.base_station');
+
+        foreach (config('dam.stage.weather') as $sky) {
+            $rendered = file_exists(public_path("assets/panorama/{$base}-{$sky}.webp"));
+
+            $phases = $this->actingAs(User::factory()->create())
+                ->getJson('/api/environment')
+                ->assertOk()
+                ->json('stage.base.phases');
+
+            /*
+            | The solar phases fall back to daylight when their file is
+            | missing; a weather name may not, or the stage would believe the
+            | sky was covered while showing a picture of a clear one. It is
+            | offered when the render exists and absent when it does not.
+            */
+            $this->assertSame($rendered, array_key_exists($sky, $phases));
+
+            if ($rendered) {
+                $this->assertStringContainsString("{$base}-{$sky}", $phases[$sky]['url']);
+                $this->assertStringContainsString("preview/{$base}-{$sky}", $phases[$sky]['preview']);
+            }
+        }
     }
 
     public function test_readings_are_reported_in_central_indonesian_time(): void

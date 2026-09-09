@@ -436,7 +436,7 @@ class StationSeeder extends Seeder
                 'code' => 'sedimen-bendungan',
                 'name' => 'Sedimen Bendungan',
                 'short_name' => 'Sedimen Bendungan',
-                'type' => 'water_quality',
+                'type' => 'sediment',
                 'group' => 'hidrologi',
                 'zone' => 'Inlet Waduk',
                 'latitude' => -1.9416,
@@ -605,6 +605,61 @@ class StationSeeder extends Seeder
                 ],
                 'hotspots' => [
                     ['type' => 'metric', 'label' => 'Terminal Box Piezometer', 'metric_key' => 'pore_pressure', 'description' => '8 kanal vibrating wire pada dua elevasi.', 'yaw' => 0, 'pitch' => -18],
+                    /*
+                    | The one marker that opens a drawing instead of a
+                    | panorama. A piezometer is buried, so there is nothing of
+                    | it to stand on in a photograph; what the reader needs is
+                    | the section it sits in, and it is asked for from the
+                    | panorama that looks at the body those instruments are in.
+                    | The figures below are an estimate off the crest elevation
+                    | and the design phreatic line, the same standing the
+                    | seeded marker angles have — replace them with the real
+                    | section when the drawing is to hand, and drag the marker
+                    | onto the axis it cuts.
+                    */
+                    [
+                        'type' => 'piezo',
+                        'label' => 'Potongan As Bendungan',
+                        'description' => 'Piezometer pondasi dan timbunan pada as bendungan.',
+                        'yaw' => 19,
+                        'pitch' => -13,
+                        'meta' => [
+                            // Where the phreatic level is read from.
+                            'station' => 'avwr-01',
+                            'crest' => 100.5,
+                            'crest_width' => 10.0,
+                            'foundation' => 62.0,
+                            'slope_up' => 2.75,     // horizontal per vertical
+                            'slope_down' => 2.25,
+                            'core_top' => 99.0,
+                            'core_top_width' => 5.0,
+                            'core_base_width' => 24.0,
+                            'water' => 93.6,        // reservoir, for the picture
+                            // What the design expects to stand at the axis,
+                            // and how much head it sheds per metre downstream.
+                            'design_phreatic' => 92.0,
+                            'gradient' => 0.16,
+                            /*
+                            | Listed, not counted: every instrument sits at its
+                            | own elevation and its own distance from the axis.
+                            | `offset` is metres from the axis, positive
+                            | downstream.
+                            */
+                            'points' => [
+                                ['code' => 'PP1', 'kind' => 'pondasi', 'elevation' => 64.5, 'offset' => -28.0],
+                                ['code' => 'PP2', 'kind' => 'pondasi', 'elevation' => 63.8, 'offset' => -12.0],
+                                ['code' => 'PP3', 'kind' => 'pondasi', 'elevation' => 63.2, 'offset' => 6.0],
+                                ['code' => 'PP4', 'kind' => 'pondasi', 'elevation' => 63.6, 'offset' => 26.0],
+                                ['code' => 'PT1', 'kind' => 'timbunan', 'elevation' => 70.0, 'offset' => -18.0],
+                                ['code' => 'PT2', 'kind' => 'timbunan', 'elevation' => 70.0, 'offset' => 8.0],
+                                ['code' => 'PT3', 'kind' => 'timbunan', 'elevation' => 78.0, 'offset' => -13.0],
+                                ['code' => 'PT4', 'kind' => 'timbunan', 'elevation' => 78.0, 'offset' => 5.0],
+                                ['code' => 'PT5', 'kind' => 'timbunan', 'elevation' => 86.0, 'offset' => -8.0],
+                                ['code' => 'PT6', 'kind' => 'timbunan', 'elevation' => 86.0, 'offset' => 3.0],
+                                ['code' => 'PT7', 'kind' => 'timbunan', 'elevation' => 93.0, 'offset' => -3.0],
+                            ],
+                        ],
+                    ],
                 ],
             ],
             [
@@ -667,7 +722,7 @@ class StationSeeder extends Seeder
                 'code' => 'gnss-tilt',
                 'name' => 'GNSS & Tiltmeter Lereng',
                 'short_name' => 'GNSS + Tilt',
-                'type' => 'deformation',
+                'type' => 'gnss',
                 'group' => 'geoteknik',
                 'zone' => 'Lereng Hilir Kanan',
                 'latitude' => -1.9556,

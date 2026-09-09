@@ -5,6 +5,8 @@
  * The stage owns the viewer itself (`twin-sphere.js`); this module keeps the
  * loader and the markup helpers both the stage and its hotspots share.
  */
+import { glyphSvg } from '../lib/icons.js';
+
 let psvPromise = null;
 
 export function loadPsv() {
@@ -29,6 +31,44 @@ export function loadPsv() {
  * `data-hotspot` is what the drag handler in `twin-sphere.js` picks the marker
  * up by, the same way a station pin carries `data-station`.
  */
+/*
+ * The one marker on the dam that opens a drawing rather than a place.
+ *
+ * A piezometer is buried: there is nothing of it in the photograph to stand a
+ * pin on, and a pin that pretended otherwise would be pointing at rockfill.
+ * What this marks is the *section* it belongs to — the cut through the dam
+ * where those instruments can actually be seen — so it is drawn as a plate
+ * with a section glyph on it and nothing else. It is the glyph alone rather
+ * than a named plate because it stands on the dam body among instruments that
+ * are named there already; what it is and what is in it are on the tooltip and
+ * in the drawing it opens, which is where a reader who wants them is going
+ * anyway.
+ *
+ * It carries `data-hotspot` as well as `data-section`: inside a station the
+ * placement control picks markers up by that attribute, so the section is
+ * dragged onto the axis it cuts with the machinery every other hotspot uses,
+ * and the drop posts to the same endpoint.
+ */
+export function sectionHtml(section, color) {
+    return `
+        <div class="psv-section" data-section="${section.id}" data-hotspot="${section.id}"
+             role="button" tabindex="0"
+             aria-label="${sectionName(section)}, buka potongan as bendungan">
+            <span class="psv-section__mark" style="border-color:${color}">
+                ${glyphSvg('section', 19)}
+            </span>
+        </div>
+    `;
+}
+
+/** What the section is called, with what is in it. */
+export function sectionName(section) {
+    const count = (section.points ?? []).length;
+    const dry = section.dry ? `, ${section.dry} kering` : '';
+
+    return `${section.label} — ${count} piezometer${dry}`;
+}
+
 export function hotspotHtml(hotspot, value, color) {
     const icon = {
         link: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M13 6l6 6-6 6"/></svg>',
