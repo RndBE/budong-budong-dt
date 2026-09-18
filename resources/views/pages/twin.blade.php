@@ -50,8 +50,7 @@
                      transitionTimingFunction: 'linear',
                  }"></div>
 
-            {{-- Cloud and rain, from the weather station or the scenario. --}}
-            <div class="pointer-events-none absolute inset-0 overflow-hidden">            {{-- Cloud and rain, from the weather station or the scenario. The
+            {{-- Cloud and rain, from the weather station or the scenario. The
                  cloud deck is given the camera's bearing, so it sits behind the
                  dam instead of being painted on the screen. --}}
             <div class="pointer-events-none absolute inset-0 overflow-hidden"

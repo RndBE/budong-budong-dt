@@ -484,9 +484,29 @@ export default function twinSphere() {
          * sky and then clearing is not weather arriving — it reads as smoke.
          * Nothing is painted from the moment the answer is a render; the
          * picture changing is the whole of the transition.
+         *
+         * A station panorama is always baked, whatever the sky is doing. The
+         * reader is standing at one instrument, looking at a render that has
+         * its own sky in it, and the painted deck can only ever be a second
+         * sky laid over the first — which at a station reads as fog rolled
+         * across the dam rather than as cloud. The base panorama keeps the
+         * paint, because there the deck is the only cloud on offer whenever
+         * the hour has no weather render of its own.
+         *
+         * `pointing` is what holds that until the picture actually changes.
+         * `viewer.open` is true from the moment the pin is picked, some eight
+         * hundred milliseconds before the cross-fade starts, so without it the
+         * deck dissolved over the base dam during the approach: the reader
+         * clicks a pin and watches the sky clear, then the station arrives.
+         * Paint and picture cross over together, the same bargain the weather
+         * render takes.
          */
         get bakedSky() {
-            return !this.stationView && this.weatherPhase(this.stagePhase);
+            // While `pointing` the base panorama is still the picture, so it
+            // keeps the base's own answer and the station's arrives with it.
+            const station = this.stationView && !this.pointing;
+
+            return station || Boolean(this.weatherPhase(this.stagePhase));
         },
 
         /** Texture set for one phase, falling back to daylight. */
