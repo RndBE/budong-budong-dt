@@ -39,12 +39,12 @@
          on the element it sits on — so a left offset of about 1070px came out
          some ninety pixels to the right on a screen scaled to 1.09. Position
          on an unzoomed parent; scale only the plate. --}}
-    <div class="chrome-slide pointer-events-none absolute flex justify-center max-sm:hidden"
+    <div class="station-strip chrome-slide pointer-events-none absolute flex justify-center max-sm:hidden"
          style="bottom: var(--stage-bottom); left: var(--stage-left); right: var(--stage-right)">
         <div class="chrome-scale glass glass--chip pointer-events-auto flex items-center gap-1 p-1.5" x-sheen>
             <template x-for="metric in ($store.viewer.station?.metrics ?? []).slice(0, 5)" :key="'strip' + metric.key">
                 <button type="button"
-                        class="flex items-center gap-2 rounded-xl px-3.5 py-2 transition"
+                        class="flex shrink-0 items-center gap-2 rounded-xl px-3.5 py-2 whitespace-nowrap transition"
                         :class="$store.viewer.activeMetric === metric.key ? 'bg-white/12' : 'hover:bg-white/8'"
                         @click="$store.viewer.focusMetric(metric.key)">
                     <span class="status-dot" :style="`background:${window.statusColor(metric.status)}`"></span>

@@ -250,6 +250,44 @@
         .app-frame:not(.app-frame--no-panel) .page-head {
             padding-right: 3.25rem;
         }
+
+        /*
+        | Below xl the panel slides over the stage rather than beside it, so the
+        | translucent cards in it sat over pin captions and the zoom stack and
+        | let both read straight through the numbers. A dark backing under the
+        | whole column makes it a surface of its own; the cards keep their glass
+        | on top of it.
+        */
+        /*
+        | The station's metric strip spans the whole stage, and on a tablet the
+        | zoom badge stands at its left end and the camera controls at its
+        | right, so a strip of five figures ran underneath both. It keeps clear
+        | of them and scrolls sideways when the five do not fit.
+        */
+        .station-strip {
+            left: calc(var(--stage-left) + 64px) !important;
+            right: calc(var(--gap) + 62px) !important;
+        }
+
+        .station-strip > div {
+            max-width: 100%;
+            overflow-x: auto;
+            scrollbar-width: none;
+        }
+
+        .station-strip > div::-webkit-scrollbar {
+            display: none;
+        }
+
+        [data-chrome="panel"] {
+            /* Starts under the toggle (44px, at --header-h) so the close
+               button is not sitting on the first card's title and chip. The
+               inline `top` is the desktop value, hence the !important. */
+            top: calc(var(--header-h) + 54px) !important;
+            border-radius: var(--radius-glass);
+            background: hsl(210 45% 7% / 0.94);
+            box-shadow: 0 30px 80px -24px rgb(0 0 0 / 0.85), inset 0 0 0 1px rgb(255 255 255 / 0.08);
+        }
     }
 
     /* Tablets: tighter chrome, narrower rail. */
@@ -784,6 +822,17 @@
     @container panel (min-width: 368px) {
         .kpi-grid {
             grid-template-columns: repeat(4, minmax(0, 1fr));
+        }
+    }
+
+    /*
+     * The slide-over below xl is 400px wide, which passes the container query
+     * above and then squeezes four tiles to ninety pixels each: the label,
+     * the figure and its unit all truncate. Two by two reads at that width.
+     */
+    @media (max-width: 1279px) {
+        .kpi-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
         }
     }
 

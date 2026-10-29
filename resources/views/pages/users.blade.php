@@ -146,7 +146,7 @@
                             <colgroup>
                                 <col style="width: 34%">
                                 <col style="width: 20%">
-                                <col style="width: 18%">
+                                <col class="max-lg:hidden" style="width: 18%">
                                 <col style="width: 14%">
                                 <col style="width: 14%">
                             </colgroup>
@@ -301,7 +301,7 @@
                             <colgroup>
                                 <col style="width: 26%">
                                 <col style="width: 34%">
-                                <col style="width: 18%">
+                                <col class="max-lg:hidden" style="width: 18%">
                                 <col style="width: 8%">
                                 <col style="width: 14%">
                             </colgroup>
