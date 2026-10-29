@@ -144,7 +144,7 @@
                                 <p class="tnum text-[10.5px] whitespace-nowrap" x-show="deltaOf(card.id) !== null"
                                    :class="deltaOf(card.id) > 0 ? 'text-state-waspada' : 'text-state-normal'">
                                     <span x-text="signed(deltaOf(card.id))"></span>
-                                    <span class="max-sm:hidden" x-text="'/ ' + range"></span>
+                                    <span class="max-sm:hidden" x-text="'/ ' + (data[card.id]?.range ?? range)"></span>
                                 </p>
                             </div>
                         </div>
@@ -157,12 +157,14 @@
                         </div>
 
                         <div class="relative h-[190px] w-full max-sm:h-[160px]">
-                            <div class="h-full w-full" data-chart :data-card-id="card.id" x-init="observe($el)"></div>
+                            <div class="h-full w-full transition-opacity duration-300"
+                                 :class="(data[card.id]?.pending || data[card.id]?.stale) && data[card.id]?.points?.length && 'opacity-40'"
+                                 data-chart :data-card-id="card.id" x-init="observe($el)"></div>
 
                             {{-- An empty window is a fact about the data, not a
                                  chart that failed to draw: say which it is. --}}
                             <p class="absolute inset-0 grid place-items-center text-center text-[11px] text-mist-400"
-                               x-show="data[card.id] && ! data[card.id].pending && ! data[card.id].points?.length" x-cloak
+                               x-show="data[card.id] && ! data[card.id].pending && ! data[card.id].stale && ! data[card.id].points?.length" x-cloak
                                x-text="data[card.id]?.failed
                                    ? 'Seri gagal dimuat.'
                                    : `Tidak ada bacaan pada rentang ${range}.`"></p>

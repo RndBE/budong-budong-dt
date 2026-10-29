@@ -68,9 +68,25 @@ function watchSize(element, echarts) {
 
     watched.add(element);
 
+    /*
+    | A ResizeObserver reports once as soon as it starts watching, with the
+    | size the element already has. Acting on that resized the chart in the
+    | first frame of its entrance, and a resize re-renders the plot — the line
+    | jumped to its end instead of drawing itself. Only a size that actually
+    | differs from the last one seen is a reason to resize.
+    */
+    let seen = `${element.clientWidth}x${element.clientHeight}`;
+
     new ResizeObserver(() => {
         const box = element.getBoundingClientRect();
         const chart = echarts.getInstanceByDom(element);
+        const size = `${element.clientWidth}x${element.clientHeight}`;
+
+        if (size === seen) {
+            return;
+        }
+
+        seen = size;
 
         if (chart && !chart.isDisposed() && box.width > 0 && box.height > 0) {
             chart.resize();
@@ -164,7 +180,41 @@ export async function seriesChart(element, datasets, options = {}) {
     surface(element, 'seri');
 
     const echarts = await loadEngine();
-    const chart = echarts.getInstanceByDom(element) ?? echarts.init(element, null, { renderer: 'canvas' });
+    const existing = echarts.getInstanceByDom(element);
+    const chart = existing ?? echarts.init(element, null, { renderer: 'canvas' });
+
+    /*
+    | The same chart given new data (another range) is one line becoming
+    | another, so the series are replaced *in place* and ECharts animates the
+    | points from where they stood to where they go. `notMerge` throws the old
+    | line away first and plays the entrance over a blank plot, which is the
+    | hard cut a range switch used to be. Anything that changes *what* is
+    | drawn — other parameters, another station — still rebuilds.
+    */
+    const morph = Boolean(existing) && options.morph === true;
+
+    /*
+    | Measure *before* the first frame. Callers used to resize the chart right
+    | after this returned, which is the first frame of the entrance: the line
+    | skipped its wipe and appeared whole.
+    */
+    if (!existing) {
+        chart.resize();
+    }
+
+    /*
+    | A chart that has only just been built also fades in. Cards arrive as
+    | their series do, one after another, and a plot that pops in at full
+    | strength reads as a flicker before the line even starts drawing. The
+    | fade is on the chart's own canvas layer through the Web Animations API,
+    | so it cannot fight the dimming class on the container.
+    */
+    if (!existing && !stillness()) {
+        element.firstElementChild?.animate(
+            [{ opacity: 0 }, { opacity: 1 }],
+            { duration: 450, easing: 'ease-out' },
+        );
+    }
 
     watchSize(element, echarts);
 
@@ -193,7 +243,7 @@ export async function seriesChart(element, datasets, options = {}) {
             | is already on the line and a hard start reads as a flicker.
             */
             animation: ! stillness(),
-            animationDuration: 560,
+            animationDuration: 900,
             animationEasing: 'cubicOut',
             animationDurationUpdate: 420,
             animationEasingUpdate: 'cubicInOut',
@@ -259,13 +309,17 @@ export async function seriesChart(element, datasets, options = {}) {
                 data: toPairs(dataset.points ?? []),
                 /*
                 | The line draws itself left to right rather than appearing
-                | whole: a point every couple of milliseconds, capped so a
-                | thirty-day series does not take a second and a half to
-                | arrive. A second series follows the first by a beat, which is
-                | what makes two of them read as two.
+                | whole, as one wipe over the whole duration. A delay per point
+                | made the wipe step — each point waiting its own turn is a
+                | stutter on a series of hundreds — so the only delay left is
+                | the beat a second series follows the first by, which is what
+                | makes two of them read as two. Bars have no wipe, so they
+                | keep a short stagger.
                 */
-                animationDelay: (point) => Math.min(point * 1.6, 320) + index * 90,
-                animationDelayUpdate: (point) => Math.min(point * 0.8, 160),
+                animationDelay: dataset.type === 'bar'
+                    ? (point) => Math.min(point * 1.6, 320) + index * 90
+                    : index * 90,
+                animationDelayUpdate: 0,
                 smooth: 0.3,
                 symbol: 'none',
                 lineStyle: { width: 2 },
@@ -275,7 +329,9 @@ export async function seriesChart(element, datasets, options = {}) {
                 markLine: index === 0 && markLines.length ? { silent: true, symbol: 'none', data: markLines } : undefined,
             })),
         },
-        { notMerge: true },
+        morph
+            ? { replaceMerge: ['series', 'yAxis', 'dataZoom'] }
+            : { notMerge: true },
     );
 
     return chart;

@@ -259,6 +259,20 @@
         | on top of it.
         */
         /*
+        | On a page with a title the toggle stands level with that title's own
+        | buttons: the buttons sit on the bottom edge of the title block, which
+        | is 50.25px tall (22px heading, 4px, 12.5px subtitle at 1.5), and the
+        | toggle is 40px, so its top is 10.25px under the header line. It
+        | stands one scrollbar's width in from the edge, so it
+        | does not sit on top of the thumb. The twin has no title row; there it
+        | stays on the line the compass and the panel start on.
+        */
+        .panel-toggle--page {
+            top: calc(var(--header-h) + 10.25px) !important;
+            right: calc(var(--gap) + 12px) !important;
+        }
+
+        /*
         | The station's metric strip spans the whole stage, and on a tablet the
         | zoom badge stands at its left end and the camera controls at its
         | right, so a strip of five figures ran underneath both. It keeps clear
@@ -283,7 +297,7 @@
             /* Starts under the toggle (44px, at --header-h) so the close
                button is not sitting on the first card's title and chip. The
                inline `top` is the desktop value, hence the !important. */
-            top: calc(var(--header-h) + 54px) !important;
+            top: calc(var(--header-h) + 60px) !important;
             border-radius: var(--radius-glass);
             background: hsl(210 45% 7% / 0.94);
             box-shadow: 0 30px 80px -24px rgb(0 0 0 / 0.85), inset 0 0 0 1px rgb(255 255 255 / 0.08);

@@ -17,10 +17,10 @@
                     Pilih fase tertentu untuk mengunci tampilan.
                 </p>
 
-                <div class="mt-3 grid grid-cols-5 gap-1.5">
+                <div class="mt-3 grid grid-cols-[repeat(auto-fit,minmax(4.75rem,1fr))] gap-1.5">
                     @foreach (['auto' => 'Otomatis', 'dawn' => 'Fajar', 'day' => 'Siang', 'dusk' => 'Senja', 'night' => 'Malam'] as $key => $label)
                         <button type="button"
-                                class="rounded-xl px-2 py-2 text-[11px] font-semibold transition"
+                                class="rounded-xl px-2 py-2 text-center text-[11px] font-semibold transition"
                                 :class="$store.site.skin === '{{ $key }}' ? 'bg-brand-500/90 text-white' : 'bg-white/8 text-mist-200 hover:bg-white/14'"
                                 @click="$store.site.setSkin('{{ $key }}')">
                             {{ $label }}

@@ -1173,19 +1173,18 @@ Alpine.data('trendChart', (stations) => ({
                 return;
             }
 
-            const chart = await seriesChart(this.$refs.chart, [{
+            await seriesChart(this.$refs.chart, [{
                 name: this.payload.metric.label,
                 points: this.payload.points,
                 type: this.payload.metric.chart_type,
             }], {
                 unit: this.payload.metric.unit,
+                morph: true,
                 thresholds: [
                     { value: this.payload.metric.normal_max, label: 'Batas Normal', color: '#34d399' },
                     { value: this.payload.metric.warning, label: 'Waspada', color: '#fbbf24' },
                 ],
             });
-
-            chart.resize();
         } finally {
             this.loading = false;
         }
@@ -1265,7 +1264,7 @@ Alpine.data('analyticsBoard', (stations) => ({
     // Every station's headline parameter, which is the one view that answers
     // a question the reader has not asked yet.
     scope: analyticsQuery().scope ?? 'semua',
-    range: analyticsQuery().range ?? '7d',
+    range: analyticsQuery().range ?? '24h',
 
     /** Series per grid card, keyed by card id. */
     data: {},
@@ -1390,20 +1389,35 @@ Alpine.data('analyticsBoard', (stations) => ({
     async drawCard(id) {
         const card = this.cardById(id);
         const element = this.slots.get(id);
+        const current = this.data[id];
 
-        if (!card || !element || this.data[id]?.pending) {
+        if (!card || !element || current?.pending) {
             return;
         }
 
-        if (!this.data[id]) {
-            this.data[id] = { pending: true };
+        /*
+        | A card whose range changed keeps its old line and figures on screen
+        | (dimmed) until the new series lands, then morphs into it. Clearing
+        | them first is what made the switch a blank frame and a redraw.
+        */
+        if (!current || current.stale) {
+            const asked = this.range;
+
+            this.data[id] = { ...(current ?? {}), pending: true };
 
             try {
                 const payload = await getJson(`/api/stations/${card.code}/series/${card.metric.key}`, {
-                    range: this.range,
+                    range: asked,
                 });
 
-                this.data[id] = { pending: false, ...payload };
+                if (asked !== this.range) {
+                    // The reader moved on while this was in flight.
+                    this.data[id] = { ...this.data[id], pending: false, stale: true };
+
+                    return this.drawCard(id);
+                }
+
+                this.data[id] = { pending: false, range: asked, ...payload };
             } catch {
                 this.data[id] = { pending: false, failed: true };
 
@@ -1425,6 +1439,7 @@ Alpine.data('analyticsBoard', (stations) => ({
             unit: series.metric.unit,
             compact: true,
             zoom: false,
+            morph: true,
             thresholds: this.thresholdsOf(series.metric),
         });
     },
@@ -1564,7 +1579,7 @@ Alpine.data('analyticsBoard', (stations) => ({
         return this.stations.find((item) => item.code === this.scope) ?? null;
     },
 
-    async loadAnalysis() {
+    async loadAnalysis({ morph = false } = {}) {
         if (!this.picked.length) {
             return;
         }
@@ -1588,7 +1603,7 @@ Alpine.data('analyticsBoard', (stations) => ({
                 return;
             }
 
-            const chart = await seriesChart(this.$refs.analysis, payloads.map((payload, index) => ({
+            await seriesChart(this.$refs.analysis, payloads.map((payload, index) => ({
                 name: this.picked.length > 1 && this.scope === 'semua'
                     ? `${this.stationOf(this.picked[index])?.name ?? ''} — ${payload.metric.label}`
                     : payload.metric.label,
@@ -1600,10 +1615,8 @@ Alpine.data('analyticsBoard', (stations) => ({
                 // Thresholds belong to one parameter; drawing every set turns
                 // the chart into a ladder.
                 thresholds: payloads.length === 1 ? this.thresholdsOf(payloads[0].metric) : [],
+                morph,
             });
-
-            // The panel may have been hidden when the instance was created.
-            chart.resize();
         } catch (error) {
             /*
             | Without this the rejection went nowhere: the old chart stayed on
@@ -1732,17 +1745,30 @@ Alpine.data('analyticsBoard', (stations) => ({
     },
 
     /** Everything already fetched is stale once the range or station changes. */
-    async refresh() {
-        this.data = {};
+    async refresh({ morph = false } = {}) {
+        // Stale, not gone: the cards keep what they show until the new range
+        // arrives (see `drawCard`).
+        this.data = Object.fromEntries(
+            Object.entries(this.data).map(([id, entry]) => [id, { ...entry, stale: true }]),
+        );
         this.observer.disconnect();
         this.slots.clear();
         this.visible.clear();
 
-        // Alpine re-renders the cards, and their `x-init` observes them again.
         await this.$nextTick();
 
+        /*
+        | Alpine only re-renders a card whose key changed. A new station
+        | changes every key and the cards' `x-init` observe themselves again,
+        | but a new range keeps every key, so nothing re-ran and the registry
+        | cleared above stayed empty: the cards sat on their old range until
+        | the reader scrolled or reloaded. Register what is in the document,
+        | whichever way it got there.
+        */
+        this.$root.querySelectorAll('[data-card-id]').forEach((element) => this.observe(element));
+
         if (this.mode === 'analisa') {
-            this.loadAnalysis();
+            this.loadAnalysis({ morph });
 
             return;
         }
@@ -1772,7 +1798,7 @@ Alpine.data('analyticsBoard', (stations) => ({
     setRange(range) {
         this.range = range;
         this.syncUrl();
-        this.refresh();
+        this.refresh({ morph: true });
     },
 
     /* --------------------------------------------------------------- shared */

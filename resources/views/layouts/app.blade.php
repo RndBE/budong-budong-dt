@@ -131,7 +131,7 @@
     </section>
 
     <button type="button"
-            class="chrome-scale glass glass--chip glass-button pointer-events-auto absolute z-40 hidden size-11 max-xl:grid"
+            class="chrome-scale glass glass--chip glass-button panel-toggle pointer-events-auto absolute z-40 hidden max-xl:grid {{ $panelFoldable ? 'size-11' : 'panel-toggle--page size-10' }}"
             style="right: var(--gap); top: var(--header-h)"
             :title="panelOpen ? 'Tutup panel data' : 'Buka panel data'"
             :aria-label="panelOpen ? 'Tutup panel data' : 'Buka panel data'"
