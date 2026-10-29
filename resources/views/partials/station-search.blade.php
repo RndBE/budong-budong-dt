@@ -4,7 +4,7 @@
      over the panorama: it belongs to the whole app, not to one stage. On the
      digital twin it turns the camera to the pin; anywhere else it opens that
      station's panorama. --}}
-<div class="pointer-events-auto relative {{ $compact ? 'xl:hidden' : 'max-xl:hidden' }}"
+<div class="pointer-events-auto relative {{ $compact ? '2xl:hidden' : 'max-2xl:hidden' }}"
      x-data="stationSearch()"
      @keydown.escape.stop="close()"
      @click.outside="close()">
