@@ -22,7 +22,8 @@
             @php($active = request()->routeIs($item['route']) || ($item['route'] === 'twin' && request()->routeIs('twin.station')))
             <li class="max-sm:flex-1">
                 <a href="{{ route($item['route']) }}"
-                   class="nav-item max-sm:min-h-11 max-sm:justify-center max-sm:px-2 {{ $active ? 'nav-item--active' : '' }}"
+                   class="nav-item max-[1439px]:justify-center max-[1439px]:px-0 max-sm:min-h-11 max-sm:px-2 {{ $active ? 'nav-item--active' : '' }}"
+                   :class="compact && 'justify-center px-0'"
                    title="{{ $item['label'] }}">
                     <span class="relative shrink-0">
                         <x-icon :name="$item['icon']" class="size-[18px]"/>
