@@ -80,7 +80,7 @@
                     <tr class="border-b border-white/10 bg-white/4 text-[10.5px] tracking-wide text-mist-300 uppercase">
                         <th class="px-4 py-3 font-semibold">Stasiun</th>
                         <th class="px-4 py-3 font-semibold">Tipe</th>
-                        <th class="px-4 py-3 font-semibold">Zona</th>
+                        <th class="px-4 py-3 font-semibold max-lg:hidden">Zona</th>
                         <th class="px-4 py-3 font-semibold">Parameter Utama</th>
                         <th class="px-4 py-3 font-semibold">Status</th>
                         <th class="px-4 py-3 text-right font-semibold">Aksi</th>
@@ -94,7 +94,7 @@
                                 <p class="text-[11px] text-mist-400">{{ strtoupper($station['code']) }}</p>
                             </td>
                             <td class="px-4 py-3 text-[12.5px] text-mist-200">{{ $station['type_label'] }}</td>
-                            <td class="px-4 py-3 text-[12.5px] text-mist-200">{{ $station['zone'] ?? '—' }}</td>
+                            <td class="px-4 py-3 text-[12.5px] text-mist-200 max-lg:hidden">{{ $station['zone'] ?? '—' }}</td>
                             <td class="tnum px-4 py-3 text-[12.5px] font-semibold text-white">{{ $station['caption'] }}</td>
                             <td class="px-4 py-3">
                                 <span class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold"
@@ -113,8 +113,9 @@
                                         </a>
                                     @endif
                                     <a href="{{ route('analytics') }}?stasiun={{ $station['code'] }}&tampilan=grafik"
-                                       class="glass glass--chip glass-button px-3 py-1.5 text-[11.5px] font-semibold">
-                                        <x-icon name="chart-line" class="size-3.5"/> Grafik
+                                       class="glass glass--chip glass-button px-3 py-1.5 text-[11.5px] font-semibold"
+                                       title="Grafik {{ $station['name'] }}" aria-label="Grafik {{ $station['name'] }}">
+                                        <x-icon name="chart-line" class="size-3.5"/> <span class="max-lg:hidden">Grafik</span>
                                     </a>
                                 </div>
                             </td>

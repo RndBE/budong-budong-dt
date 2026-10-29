@@ -31,7 +31,7 @@
          style="top: var(--stage-top); bottom: var(--gap); left: var(--stage-left);
                 right: {{ $wide ? 'var(--gap)' : 'var(--stage-right)' }}">
         @if ($title)
-            <div class="mb-3.5 flex flex-wrap items-end justify-between gap-4 max-sm:gap-2">
+            <div class="page-head mb-3.5 flex flex-wrap items-end justify-between gap-4 max-sm:gap-2">
                 <div>
                     <h1 class="text-[22px] leading-tight font-bold text-white">{{ $title }}</h1>
                     @if ($subtitle)

@@ -241,6 +241,16 @@
             --stage-right: var(--gap);
         }
     }
+    /*
+     * The panel's toggle button floats over the top-right corner of the page,
+     * exactly where a page puts its action buttons. Pages that own a panel
+     * leave it that corner.
+     */
+    @media (max-width: 1279px) {
+        .app-frame:not(.app-frame--no-panel) .page-head {
+            padding-right: 3.25rem;
+        }
+    }
 
     /* Tablets: tighter chrome, narrower rail. */
     @media (max-width: 1023px) {
@@ -794,7 +804,13 @@
     }
 
     .table-scroll > table {
-        min-width: 720px;
+        min-width: 600px;
+    }
+
+    @media (min-width: 1024px) {
+        .table-scroll > table {
+            min-width: 720px;
+        }
     }
 }
 

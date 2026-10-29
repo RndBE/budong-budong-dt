@@ -704,9 +704,16 @@ records conventions that are easy to break.
   The name is therefore one line that truncates (`min-w-[6.5rem]` so it
   shrinks to something rather than to nothing) and never `shrink-0` — held at
   full width the row overflows and the account menu walks off the right edge.
-  With the search in it that row is still wider than the screen below about
-  1100px; that part is unsolved, and hiding the weather and clock chips
-  earlier is the obvious place to start.
+  Tablets are handled by shedding in order: below `xl` the tagline, the
+  weather detail line, the account name and the search field (it becomes the
+  icon) go; below `lg` the weather chip and the clock's "Sistem Normal" label
+  go; below `sm` the whole chip row goes. Checked at 744 (iPad mini portrait)
+  through 1400 (MatePad 12 X landscape).
+- On tablets the summary panel's toggle floats over the page's top-right
+  corner, so `.page-head` pads that corner below `xl` on pages that own a
+  panel. Page tables drop their least important column below `lg`
+  (`max-lg:hidden`) rather than scroll sideways, because the action column is
+  the one a sideways scroll hides.
 - A wrapper that only carries `x-show` around a partial that hides itself at a
   breakpoint must be `display: contents`. The header's two search slots are
   `<div class="contents" x-show="…">`: without it the wrapper stays a flex

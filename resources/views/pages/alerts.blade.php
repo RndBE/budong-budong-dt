@@ -37,8 +37,8 @@
                         <th class="px-4 py-3 font-semibold">Waktu</th>
                         <th class="px-4 py-3 font-semibold">Level</th>
                         <th class="px-4 py-3 font-semibold">Kejadian</th>
-                        <th class="px-4 py-3 font-semibold">Stasiun</th>
-                        <th class="px-4 py-3 font-semibold">Nilai / Ambang</th>
+                        <th class="px-4 py-3 font-semibold max-lg:hidden">Stasiun</th>
+                        <th class="px-4 py-3 font-semibold max-lg:hidden">Nilai / Ambang</th>
                         <th class="px-4 py-3 font-semibold">Status</th>
                         <th class="px-4 py-3 text-right font-semibold">Aksi</th>
                     </tr>
@@ -62,7 +62,7 @@
                                 <p class="text-[12.5px] font-semibold text-white">{{ $alert->title }}</p>
                                 <p class="text-[11.5px] text-mist-300">{{ $alert->message }}</p>
                             </td>
-                            <td class="px-4 py-3 text-[12px] text-mist-200">
+                            <td class="px-4 py-3 text-[12px] text-mist-200 max-lg:hidden">
                                 @if ($alert->station)
                                     <a href="{{ route('twin.station', $alert->station->code) }}" class="hover:text-white">
                                         {{ $alert->station->name }}
@@ -71,7 +71,7 @@
                                     —
                                 @endif
                             </td>
-                            <td class="tnum px-4 py-3 text-[12px] text-mist-200 whitespace-nowrap">
+                            <td class="tnum px-4 py-3 text-[12px] text-mist-200 whitespace-nowrap max-lg:hidden">
                                 {{ $alert->value !== null ? number_format((float) $alert->value, 2, ',', '.') : '—' }}
                                 <span class="text-mist-400">/</span>
                                 {{ $alert->threshold !== null ? number_format((float) $alert->threshold, 2, ',', '.') : '—' }}

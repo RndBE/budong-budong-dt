@@ -142,7 +142,7 @@
                     <div class="table-scroll">
                         {{-- Fixed columns: an auto table spreads four short cells
                              across a 1600px screen and the row falls apart. --}}
-                        <table class="w-full min-w-[760px] table-fixed border-collapse text-left">
+                        <table class="w-full min-w-[560px] table-fixed lg:min-w-[760px] border-collapse text-left">
                             <colgroup>
                                 <col style="width: 34%">
                                 <col style="width: 20%">
@@ -154,7 +154,7 @@
                                 <tr class="border-b border-white/10 bg-white/4 text-[10.5px] tracking-wide text-mist-300 uppercase">
                                     <th class="px-4 py-3 font-semibold">Nama</th>
                                     <th class="px-4 py-3 font-semibold">Peran</th>
-                                    <th class="px-4 py-3 font-semibold">Sisi perawatan</th>
+                                    <th class="px-4 py-3 font-semibold max-lg:hidden">Sisi perawatan</th>
                                     <th class="px-4 py-3 font-semibold">Status</th>
                                     <th class="px-4 py-3 text-right font-semibold">Aksi</th>
                                 </tr>
@@ -187,7 +187,7 @@
                                                 <p class="mt-1 text-[10.5px] text-state-waspada">Peran sudah tidak ada</p>
                                             @endif
                                         </td>
-                                        <td class="px-4 py-3 text-[12px] text-mist-200">{{ $user->sideLabel() }}</td>
+                                        <td class="px-4 py-3 text-[12px] text-mist-200 max-lg:hidden">{{ $user->sideLabel() }}</td>
                                         <td class="px-4 py-3">
                                             {{-- A pill, not a word: the difference between an account that
                                                  can sign in and one that cannot has to survive a glance. --}}
@@ -297,7 +297,7 @@
             <div x-show="tab === 'peran'" x-cloak id="access-panel-peran" role="tabpanel" aria-labelledby="access-tab-peran">
                 <div class="glass glass--panel overflow-hidden p-0 max-sm:hidden" x-sheen>
                     <div class="table-scroll">
-                        <table class="w-full min-w-[760px] table-fixed border-collapse text-left">
+                        <table class="w-full min-w-[560px] table-fixed lg:min-w-[760px] border-collapse text-left">
                             <colgroup>
                                 <col style="width: 26%">
                                 <col style="width: 34%">
@@ -309,7 +309,7 @@
                                 <tr class="border-b border-white/10 bg-white/4 text-[10.5px] tracking-wide text-mist-300 uppercase">
                                     <th class="px-4 py-3 font-semibold">Peran</th>
                                     <th class="px-4 py-3 font-semibold">Keterangan</th>
-                                    <th class="px-4 py-3 font-semibold">Sisi perawatan</th>
+                                    <th class="px-4 py-3 font-semibold max-lg:hidden">Sisi perawatan</th>
                                     <th class="px-4 py-3 text-right font-semibold">Pengguna</th>
                                     <th class="px-4 py-3 text-right font-semibold">Aksi</th>
                                 </tr>
@@ -330,7 +330,7 @@
                                         <td class="px-4 py-3 text-[12px] leading-relaxed text-mist-300">
                                             {{ $role->description ?? '—' }}
                                         </td>
-                                        <td class="px-4 py-3">
+                                        <td class="px-4 py-3 max-lg:hidden">
                                             <span class="inline-block max-w-full truncate rounded-lg bg-white/10 px-2 py-1 text-[11px] font-semibold text-mist-100">
                                                 {{ $role->sideLabel() }}
                                             </span>
